@@ -1,0 +1,589 @@
+{% extends "base.html" %}
+{% block title %}血壓儀表板{% endblock %}
+{% block content %}
+
+<div class="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
+  <div class="bg-white p-4 rounded-lg shadow-sm border border-slate-200">
+    <div class="text-xs text-slate-500 mb-1">總紀錄數</div>
+    <div class="text-2xl font-bold">{{ total }}</div>
+    <div class="text-xs text-slate-400">{{ days }} 天 ({% if ocr_v1_n %}OCR 未校對 {{ ocr_v1_n }}{% endif %})</div>
+  </div>
+
+  <div class="bg-white p-4 rounded-lg shadow-sm border border-slate-200">
+    <div class="text-xs text-slate-500 mb-1">日期範圍</div>
+    <div class="text-sm font-medium">{{ date_range.lo }}</div>
+    <div class="text-sm font-medium">~ {{ date_range.hi }}</div>
+  </div>
+
+  <div class="bg-white p-4 rounded-lg shadow-sm border border-slate-200">
+    <div class="text-xs text-slate-500 mb-1">近 30 天平均</div>
+    {% if avg.s %}
+      <div class="text-2xl font-bold">{{ avg.s|round|int }} / {{ avg.d|round|int }}</div>
+      <div class="text-xs text-slate-400">心跳 {{ avg.p|round|int if avg.p else '-' }}</div>
+    {% else %}
+      <div class="text-slate-400">無近期資料</div>
+    {% endif %}
+  </div>
+
+  <div class="bg-white p-4 rounded-lg shadow-sm border border-slate-200">
+    <div class="text-xs text-slate-500 mb-1">血壓分級 (近30天)</div>
+    {% set color_map = {'crisis':'bg-red-700 text-white','stage2':'bg-red-500 text-white','stage1':'bg-orange-400 text-white','elevated':'bg-yellow-400','normal':'bg-green-500 text-white','unknown':'bg-slate-300'} %}
+    <div class="inline-block px-3 py-1.5 rounded font-medium {{ color_map[classification] }}">{{ classification_label }}</div>
+  </div>
+</div>
+
+<!-- BP Classification Reference (AHA/ACC 2017) -->
+<div class="bg-white p-3 rounded-lg shadow-sm border border-slate-200 mb-6">
+  <div class="text-xs text-slate-500 mb-2">血壓分級標準 (AHA/ACC 2017,收縮 / 舒張 mmHg,任一達標即歸該級)</div>
+  <div class="grid grid-cols-2 md:grid-cols-5 gap-2 text-center text-sm">
+    {% set level_data = [
+      ('normal', '正常', '< 120', '< 80'),
+      ('elevated', '血壓偏高', '120 – 129', '< 80'),
+      ('stage1', '高血壓 1 級', '130 – 139', '80 – 89'),
+      ('stage2', '高血壓 2 級', '≥ 140', '≥ 90'),
+      ('crisis', '高血壓危象', '≥ 180', '≥ 120'),
+    ] %}
+    {% for key, label, sys_r, dia_r in level_data %}
+      <div class="border-2 rounded p-2 {% if classification == key %}{{ color_map[key] }} border-current ring-2 ring-offset-1 ring-current{% else %}border-slate-200 bg-slate-50{% endif %}">
+        <div class="font-medium {% if classification != key %}text-slate-700{% endif %}">{{ label }}{% if classification == key %} ★{% endif %}</div>
+        <div class="text-xs mt-0.5 {% if classification != key %}text-slate-500{% endif %}">收縮 {{ sys_r }}</div>
+        <div class="text-xs {% if classification != key %}text-slate-500{% endif %}">舒張 {{ dia_r }}</div>
+      </div>
+    {% endfor %}
+  </div>
+</div>
+
+<div class="bg-white p-4 rounded-lg shadow-sm border border-slate-200 mb-6">
+  <div class="flex flex-wrap items-center justify-between gap-3 mb-3">
+    <h2 class="text-lg font-bold">血壓趨勢</h2>
+    <div class="flex flex-wrap items-center gap-1 text-sm">
+      <button class="trend-range-btn px-3 py-1 rounded bg-blue-100 text-blue-700 font-medium" data-days="30">30 天</button>
+      <button class="trend-range-btn px-3 py-1 rounded hover:bg-slate-100" data-days="90">90 天</button>
+      <button class="trend-range-btn px-3 py-1 rounded hover:bg-slate-100" data-days="180">180 天</button>
+      <button class="trend-range-btn px-3 py-1 rounded hover:bg-slate-100" data-days="9999">全部</button>
+    </div>
+  </div>
+  <div class="flex flex-wrap items-center gap-2 mb-3 text-sm border-b border-slate-100 pb-3">
+    <span class="text-slate-500 text-xs">自訂區間:</span>
+    <input type="date" id="dateFrom" class="px-2 py-1 border border-slate-300 rounded text-sm">
+    <span class="text-slate-400">~</span>
+    <input type="date" id="dateTo" class="px-2 py-1 border border-slate-300 rounded text-sm">
+    <button id="dateApplyBtn" class="px-3 py-1 rounded bg-blue-600 text-white text-xs hover:bg-blue-700">套用</button>
+    <button id="dateClearBtn" class="px-3 py-1 rounded border border-slate-300 text-xs hover:bg-slate-100">清除</button>
+  </div>
+
+  <!-- Filter chips: each chip controls visibility of a category -->
+  <div class="flex flex-wrap items-center gap-x-5 gap-y-2 mb-2 text-sm border-b border-slate-100 pb-3">
+    <div class="flex items-center gap-2">
+      <span class="text-slate-500 text-xs">時段:</span>
+      <button class="filter-chip filter-period active" data-val="AM">上午</button>
+      <button class="filter-chip filter-period active" data-val="PM">下午</button>
+    </div>
+    <div class="flex items-center gap-2">
+      <span class="text-slate-500 text-xs">手:</span>
+      <button class="filter-chip filter-arm active" data-val="L">左手</button>
+      <button class="filter-chip filter-arm active" data-val="R">右手</button>
+    </div>
+    <div class="flex items-center gap-2">
+      <span class="text-slate-500 text-xs">次序:</span>
+      <button class="filter-chip filter-seq active" data-val="1">第 1 次</button>
+      <button class="filter-chip filter-seq active" data-val="2">第 2 次</button>
+    </div>
+    <div class="flex items-center gap-2">
+      <span class="text-slate-500 text-xs">指標:</span>
+      <button class="filter-chip filter-metric active" data-val="sys">收縮壓</button>
+      <button class="filter-chip filter-metric" data-val="dia">舒張壓</button>
+    </div>
+    <div class="flex items-center gap-2 ml-auto">
+      <label class="flex items-center gap-1.5 cursor-pointer">
+        <input type="checkbox" id="aggregateMode" class="rounded">
+        <span class="text-xs text-slate-600">聚合為單線 (平均)</span>
+      </label>
+    </div>
+  </div>
+  <div class="text-xs text-slate-500 mb-2">每組 (時段 × 手 × 次序) 是獨立一條線,點 chip 開關該分類所有相關線。預設「收縮壓」顯示,可切換指標。</div>
+
+  <div style="height: 380px;"><canvas id="trendChart"></canvas></div>
+</div>
+
+<style>
+.filter-chip {
+  padding: 4px 12px;
+  border-radius: 9999px;
+  border: 1px solid #cbd5e1;
+  font-size: 0.75rem;
+  background: #f8fafc;
+  color: #475569;
+  transition: all 0.15s;
+}
+.filter-chip.active {
+  background: #2563eb;
+  color: white;
+  border-color: #2563eb;
+}
+.filter-chip:hover { transform: translateY(-1px); }
+</style>
+
+<!-- Daily variability chart (stock-style range) -->
+<div class="bg-white p-4 rounded-lg shadow-sm border border-slate-200 mb-6">
+  <div class="flex items-center justify-between mb-3">
+    <h2 class="text-lg font-bold">當日變異區間</h2>
+    <div class="text-xs text-slate-500">每天 min~max 範圍 (色柱) + 平均 (連線),依目前篩選計算</div>
+  </div>
+  <div style="height: 280px;"><canvas id="varSysChart"></canvas></div>
+  <div style="height: 240px; margin-top: 8px;"><canvas id="varDiaChart"></canvas></div>
+</div>
+
+<!-- Phase 3 — 分析洞察(近 30 天) -->
+<div class="bg-white p-4 rounded-lg shadow-sm border border-slate-200 mb-6">
+  <div class="flex items-center justify-between mb-3">
+    <h2 class="text-lg font-bold">📊 分析洞察 <span class="text-xs text-slate-500 font-normal">(近 30 天)</span></h2>
+    <a href="{{ url_for('analytics_page') }}" class="text-xs text-blue-600 hover:underline">查看完整分析 →</a>
+  </div>
+
+  <div class="grid grid-cols-2 md:grid-cols-4 gap-3">
+    <!-- 晨/昏對比 -->
+    <div class="border border-slate-200 rounded-lg p-3">
+      <div class="text-xs text-slate-500 mb-1">晨 vs 昏 (收縮)</div>
+      {% set me = insights.morning_evening %}
+      {% if me.AM.sys_mean and me.PM.sys_mean %}
+        <div class="text-sm font-mono">
+          <span class="text-orange-600">{{ me.AM.sys_mean|round|int }}</span>
+          <span class="text-slate-400 mx-1">/</span>
+          <span class="text-indigo-600">{{ me.PM.sys_mean|round|int }}</span>
+        </div>
+        {% if me.diff_sys is not none %}
+          <div class="text-xs mt-1
+            {% if me.diff_sys > 5 %}text-amber-600
+            {% elif me.diff_sys < -5 %}text-red-600
+            {% else %}text-slate-500{% endif %}">
+            {% if me.diff_sys > 0 %}晨高 {{ me.diff_sys|round(1) }} mmHg
+            {% elif me.diff_sys < 0 %}昏高 {{ (me.diff_sys|abs)|round(1) }} mmHg
+            {% else %}持平{% endif %}
+          </div>
+        {% endif %}
+      {% else %}
+        <div class="text-slate-400 text-sm">資料不足</div>
+      {% endif %}
+    </div>
+
+    <!-- 左右手差 -->
+    <div class="border border-slate-200 rounded-lg p-3 {% if insights.left_right.warning %}bg-red-50 border-red-300{% endif %}">
+      <div class="text-xs text-slate-500 mb-1">左右手差 (收縮)</div>
+      {% set lr = insights.left_right %}
+      {% if lr.diff_sys is not none %}
+        <div class="text-sm font-mono">
+          {% if lr.diff_sys > 0 %}左 +{{ lr.diff_sys|round(1) }}
+          {% elif lr.diff_sys < 0 %}右 +{{ (lr.diff_sys|abs)|round(1) }}
+          {% else %}持平{% endif %}
+        </div>
+        <div class="text-xs mt-1 {% if lr.warning %}text-red-700 font-medium{% else %}text-slate-500{% endif %}">
+          {% if lr.warning %}⚠ &gt;10 mmHg 警訊{% else %}&lt;10 mmHg 正常{% endif %}
+        </div>
+      {% else %}
+        <div class="text-slate-400 text-sm">資料不足</div>
+      {% endif %}
+    </div>
+
+    <!-- 週趨勢 (用 12 週資料) -->
+    <div class="border border-slate-200 rounded-lg p-3">
+      <div class="text-xs text-slate-500 mb-1">週趨勢 (近 12 週)</div>
+      {% set wt = insights.weekly_trend %}
+      {% if wt and wt.sys_slope is not none %}
+        <div class="text-sm font-mono">
+          {% if wt.sys_slope > 0 %}<span class="text-red-600">↑ +{{ wt.sys_slope|round(2) }}</span>
+          {% elif wt.sys_slope < 0 %}<span class="text-green-600">↓ {{ wt.sys_slope|round(2) }}</span>
+          {% else %}<span class="text-slate-600">→ 持平</span>{% endif %}
+        </div>
+        <div class="text-xs text-slate-500 mt-1">每週 mmHg
+          {% if wt.sys_r2 is not none %} · R²={{ wt.sys_r2|round(2) }}{% endif %}
+        </div>
+      {% else %}
+        <div class="text-slate-400 text-sm">資料不足</div>
+      {% endif %}
+    </div>
+
+    <!-- 達標率 -->
+    <div class="border border-slate-200 rounded-lg p-3">
+      <div class="text-xs text-slate-500 mb-1">達標率 <span class="text-slate-400">(&lt;130/80)</span></div>
+      {% set ar = insights.achievement %}
+      {% if ar.rate is not none %}
+        <div class="text-sm font-mono">
+          <span class="
+            {% if ar.rate >= 0.7 %}text-green-600
+            {% elif ar.rate >= 0.4 %}text-amber-600
+            {% else %}text-red-600{% endif %} font-bold">
+            {{ (ar.rate * 100)|round|int }}%
+          </span>
+        </div>
+        <div class="text-xs text-slate-500 mt-1">{{ ar.days_in_target }}/{{ ar.days_with_data }} 天</div>
+      {% else %}
+        <div class="text-slate-400 text-sm">資料不足</div>
+      {% endif %}
+    </div>
+  </div>
+
+  <!-- 規則式自動摘要 -->
+  {% if insights.summary %}
+  <div class="mt-4 pt-3 border-t border-slate-100">
+    <div class="text-xs text-slate-500 mb-2">📝 自動摘要</div>
+    <ul class="text-sm space-y-1 text-slate-700">
+      {% for s in insights.summary %}
+        <li class="flex gap-2">
+          <span class="text-slate-400 flex-shrink-0">·</span>
+          <span>{{ s }}</span>
+        </li>
+      {% endfor %}
+    </ul>
+  </div>
+  {% endif %}
+</div>
+
+<div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
+  <div class="bg-white p-4 rounded-lg shadow-sm border border-slate-200">
+    <h3 class="font-bold mb-3">心跳趨勢</h3>
+    <div style="height: 240px;"><canvas id="pulseChart"></canvas></div>
+  </div>
+  <div class="bg-white p-4 rounded-lg shadow-sm border border-slate-200">
+    <h3 class="font-bold mb-3">最新一次量測</h3>
+    {% if latest_session %}
+      <div class="text-sm text-slate-500 mb-2">{{ latest_session[0].measure_date }} {{ latest_session[0].period }} {{ latest_session[0].measure_time or '' }}</div>
+      <table class="w-full text-sm">
+        <thead><tr class="text-slate-500 border-b">
+          <th class="text-left py-1">手 / 次</th><th class="text-right">收縮</th><th class="text-right">舒張</th><th class="text-right">心跳</th>
+        </tr></thead>
+        <tbody>
+        {% for r in latest_session %}
+          <tr class="border-b border-slate-100">
+            <td class="py-1">{{ r.arm }}{{ r.sequence }}</td>
+            <td class="text-right">{{ r.systolic or '-' }}</td>
+            <td class="text-right">{{ r.diastolic or '-' }}</td>
+            <td class="text-right">{{ r.pulse or '-' }}</td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    {% else %}
+      <div class="text-slate-400 text-sm">無資料</div>
+    {% endif %}
+  </div>
+</div>
+
+<script>
+const NORMAL_SYS = 120, NORMAL_DIA = 80;
+const HYPER1_SYS = 130, HYPER1_DIA = 80;
+const HYPER2_SYS = 140, HYPER2_DIA = 90;
+
+let trendChart, pulseChart, varSysChart, varDiaChart;
+let rawRows = [];
+
+// 8 combos × distinct colors. AM = brighter, PM = darker shade.
+const COMBO_COLORS = {
+  'AM-L-1': '#dc2626', 'AM-L-2': '#f97316',
+  'AM-R-1': '#2563eb', 'AM-R-2': '#06b6d4',
+  'PM-L-1': '#7c2d12', 'PM-L-2': '#9a3412',
+  'PM-R-1': '#1e3a8a', 'PM-R-2': '#155e75',
+};
+const ALL_COMBOS = [];
+for (const p of ['AM','PM']) for (const a of ['L','R']) for (const s of [1,2]) ALL_COMBOS.push({period:p, arm:a, seq:s});
+
+function getActiveFilters() {
+  const sel = q => [...document.querySelectorAll(q + '.active')].map(b => b.dataset.val);
+  return {
+    periods: sel('.filter-period'),
+    arms: sel('.filter-arm'),
+    seqs: sel('.filter-seq').map(Number),
+    metrics: sel('.filter-metric'),
+    aggregate: document.getElementById('aggregateMode').checked,
+  };
+}
+
+function buildTrendDatasets(rows, f) {
+  const allDates = [...new Set(rows.map(r => r.measure_date))].sort();
+  const datasets = [];
+
+  if (f.aggregate) {
+    // Single line per metric (mean of all selected combos)
+    const byDate = {};
+    for (const r of rows) {
+      if (!byDate[r.measure_date]) byDate[r.measure_date] = {sys: [], dia: []};
+      if (r.systolic != null) byDate[r.measure_date].sys.push(r.systolic);
+      if (r.diastolic != null) byDate[r.measure_date].dia.push(r.diastolic);
+    }
+    const sys = allDates.map(d => byDate[d]?.sys.length ? byDate[d].sys.reduce((a,b)=>a+b,0)/byDate[d].sys.length : null);
+    const dia = allDates.map(d => byDate[d]?.dia.length ? byDate[d].dia.reduce((a,b)=>a+b,0)/byDate[d].dia.length : null);
+    if (f.metrics.includes('sys'))
+      datasets.push({label:'平均 收縮壓', data:sys, borderColor:'#dc2626', backgroundColor:'#dc262620', tension:0.2, pointRadius:2, spanGaps:true, borderWidth:2.5});
+    if (f.metrics.includes('dia'))
+      datasets.push({label:'平均 舒張壓', data:dia, borderColor:'#2563eb', backgroundColor:'#2563eb20', tension:0.2, pointRadius:2, spanGaps:true, borderWidth:2.5, borderDash:[4,2]});
+    return {labels: allDates, datasets};
+  }
+
+  // One line per visible combo
+  for (const c of ALL_COMBOS) {
+    if (!f.periods.includes(c.period) || !f.arms.includes(c.arm) || !f.seqs.includes(c.seq)) continue;
+    const key = `${c.period}-${c.arm}-${c.seq}`;
+    const matching = rows.filter(r => r.period === c.period && r.arm === c.arm && r.sequence === c.seq);
+    const byDate = {};
+    for (const r of matching) byDate[r.measure_date] = r;
+    const sys = allDates.map(d => byDate[d]?.systolic ?? null);
+    const dia = allDates.map(d => byDate[d]?.diastolic ?? null);
+    const color = COMBO_COLORS[key];
+    const armLabel = c.arm === 'L' ? '左' : '右';
+    if (f.metrics.includes('sys')) {
+      datasets.push({
+        label: `${c.period} ${armLabel}${c.seq} 收縮`,
+        data: sys, borderColor: color, backgroundColor: color + '20',
+        tension: 0.2, pointRadius: 1.5, spanGaps: true, borderWidth: 1.5,
+      });
+    }
+    if (f.metrics.includes('dia')) {
+      datasets.push({
+        label: `${c.period} ${armLabel}${c.seq} 舒張`,
+        data: dia, borderColor: color, backgroundColor: color + '20',
+        borderDash: [4, 2],
+        tension: 0.2, pointRadius: 1.5, spanGaps: true, borderWidth: 1.5,
+      });
+    }
+  }
+  return {labels: allDates, datasets};
+}
+
+function buildPulseDatasets(rows, f) {
+  const allDates = [...new Set(rows.map(r => r.measure_date))].sort();
+  const datasets = [];
+  if (f.aggregate) {
+    const byDate = {};
+    for (const r of rows) {
+      if (!byDate[r.measure_date]) byDate[r.measure_date] = [];
+      if (r.pulse != null) byDate[r.measure_date].push(r.pulse);
+    }
+    const pul = allDates.map(d => byDate[d]?.length ? byDate[d].reduce((a,b)=>a+b,0)/byDate[d].length : null);
+    datasets.push({label:'平均 心跳', data:pul, borderColor:'#16a34a', backgroundColor:'#16a34a20', tension:0.2, pointRadius:2, spanGaps:true, borderWidth:2});
+  } else {
+    for (const c of ALL_COMBOS) {
+      if (!f.periods.includes(c.period) || !f.arms.includes(c.arm) || !f.seqs.includes(c.seq)) continue;
+      const key = `${c.period}-${c.arm}-${c.seq}`;
+      const matching = rows.filter(r => r.period === c.period && r.arm === c.arm && r.sequence === c.seq);
+      const byDate = {};
+      for (const r of matching) byDate[r.measure_date] = r;
+      const pul = allDates.map(d => byDate[d]?.pulse ?? null);
+      const armLabel = c.arm === 'L' ? '左' : '右';
+      datasets.push({
+        label: `${c.period} ${armLabel}${c.seq}`,
+        data: pul, borderColor: COMBO_COLORS[key], backgroundColor: COMBO_COLORS[key] + '20',
+        tension: 0.2, pointRadius: 1.5, spanGaps: true, borderWidth: 1.5,
+      });
+    }
+  }
+  return {labels: allDates, datasets};
+}
+
+function buildVariabilityDatasets(rows, metric) {
+  // For each date, compute min/max/mean of the metric from all selected rows
+  const byDate = {};
+  for (const r of rows) {
+    const v = r[metric];
+    if (v == null) continue;
+    if (!byDate[r.measure_date]) byDate[r.measure_date] = [];
+    byDate[r.measure_date].push(v);
+  }
+  const labels = Object.keys(byDate).sort();
+  const range = labels.map(d => {
+    const arr = byDate[d];
+    return [Math.min(...arr), Math.max(...arr)];
+  });
+  const mean = labels.map(d => {
+    const arr = byDate[d];
+    return arr.reduce((a,b)=>a+b,0) / arr.length;
+  });
+  return {labels, range, mean};
+}
+
+function applyFiltersAndDraw() {
+  const f = getActiveFilters();
+  const filtered = rawRows.filter(r =>
+    f.periods.includes(r.period) && f.arms.includes(r.arm) && f.seqs.includes(r.sequence)
+  );
+
+  const trend = buildTrendDatasets(filtered, f);
+  const pulse = buildPulseDatasets(filtered, f);
+
+  if (trendChart) trendChart.destroy();
+  if (pulseChart) pulseChart.destroy();
+  if (varSysChart) varSysChart.destroy();
+  if (varDiaChart) varDiaChart.destroy();
+
+  const subtitle = `${filtered.length} 筆讀數,${trend.datasets.length} 條線`;
+
+  const navigateOnClick = (chart) => (evt, elements) => {
+    if (!elements.length) {
+      // Try fallback: nearest by index
+      const points = chart.getElementsAtEventForMode(evt, 'index', {intersect: false}, false);
+      if (!points.length) return;
+      elements = points;
+    }
+    const idx = elements[0].index;
+    const date = chart.data.labels[idx];
+    if (date) window.location.href = `/records?focus=${encodeURIComponent(date)}`;
+  };
+
+  trendChart = new Chart(document.getElementById('trendChart').getContext('2d'), {
+    type: 'line',
+    data: {labels: trend.labels, datasets: trend.datasets},
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      interaction: {mode: 'index', intersect: false},
+      onClick: function(evt, elements) { navigateOnClick(this)(evt, elements); },
+      onHover: (evt, elements) => {
+        evt.native.target.style.cursor = elements.length ? 'pointer' : 'default';
+      },
+      scales: {
+        y: {min: 50, max: 180, title: {display: true, text: 'mmHg'}},
+        x: {ticks: {maxTicksLimit: 12}}
+      },
+      plugins: {
+        legend: {position: 'top', labels: {boxWidth: 16, font: {size: 10}}},
+        title: {display: true, text: subtitle + ' (點任一資料點 → 跳到記錄頁)', color: '#64748b', font: {weight: 'normal', size: 11}},
+        tooltip: {callbacks: {label: (ctx) => `${ctx.dataset.label}: ${ctx.parsed.y == null ? '-' : Math.round(ctx.parsed.y)}`}}
+      }
+    }
+  });
+
+  pulseChart = new Chart(document.getElementById('pulseChart').getContext('2d'), {
+    type: 'line',
+    data: {labels: pulse.labels, datasets: pulse.datasets},
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      onClick: function(evt, elements) { navigateOnClick(this)(evt, elements); },
+      onHover: (evt, elements) => { evt.native.target.style.cursor = elements.length ? 'pointer' : 'default'; },
+      scales: {y: {min: 40, max: 120, title: {display: true, text: 'bpm'}}},
+      plugins: {
+        legend: {labels: {boxWidth: 16, font: {size: 10}}},
+        tooltip: {callbacks: {label: (ctx) => `${ctx.dataset.label}: ${ctx.parsed.y == null ? '-' : Math.round(ctx.parsed.y)}`}}
+      }
+    }
+  });
+
+  // Variability charts
+  const sysVar = buildVariabilityDatasets(filtered, 'systolic');
+  varSysChart = new Chart(document.getElementById('varSysChart').getContext('2d'), {
+    type: 'bar',
+    data: {
+      labels: sysVar.labels,
+      datasets: [
+        {label: '收縮壓 範圍 (min~max)', data: sysVar.range, backgroundColor: 'rgba(220,38,38,0.35)', borderColor: 'rgba(220,38,38,0.8)', borderWidth: 1, borderSkipped: false, barPercentage: 0.7, categoryPercentage: 0.9},
+        {label: '收縮壓 平均', data: sysVar.mean, type: 'line', borderColor: '#dc2626', backgroundColor: '#dc2626', pointRadius: 2.5, pointStyle: 'circle', borderWidth: 1.5, tension: 0.15, spanGaps: true},
+      ]
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      onClick: function(evt, elements) { navigateOnClick(this)(evt, elements); },
+      onHover: (evt, elements) => { evt.native.target.style.cursor = elements.length ? 'pointer' : 'default'; },
+      scales: {y: {min: 80, max: 180, title: {display: true, text: '收縮 mmHg'}}, x: {ticks: {maxTicksLimit: 15}}},
+      plugins: {
+        legend: {labels: {boxWidth: 14, font: {size: 10}}},
+        tooltip: {callbacks: {label: (ctx) => {
+          if (ctx.dataset.type === 'line') return `平均 ${Math.round(ctx.parsed.y)}`;
+          const r = ctx.parsed._custom?.barStart != null ? [ctx.parsed._custom.barStart, ctx.parsed._custom.barEnd] : ctx.raw;
+          return `${r[0]}~${r[1]} (差 ${r[1]-r[0]})`;
+        }}}
+      }
+    }
+  });
+
+  const diaVar = buildVariabilityDatasets(filtered, 'diastolic');
+  varDiaChart = new Chart(document.getElementById('varDiaChart').getContext('2d'), {
+    type: 'bar',
+    data: {
+      labels: diaVar.labels,
+      datasets: [
+        {label: '舒張壓 範圍 (min~max)', data: diaVar.range, backgroundColor: 'rgba(37,99,235,0.35)', borderColor: 'rgba(37,99,235,0.8)', borderWidth: 1, borderSkipped: false, barPercentage: 0.7, categoryPercentage: 0.9},
+        {label: '舒張壓 平均', data: diaVar.mean, type: 'line', borderColor: '#2563eb', backgroundColor: '#2563eb', pointRadius: 2.5, pointStyle: 'circle', borderWidth: 1.5, tension: 0.15, spanGaps: true},
+      ]
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      onClick: function(evt, elements) { navigateOnClick(this)(evt, elements); },
+      onHover: (evt, elements) => { evt.native.target.style.cursor = elements.length ? 'pointer' : 'default'; },
+      scales: {y: {min: 50, max: 120, title: {display: true, text: '舒張 mmHg'}}, x: {ticks: {maxTicksLimit: 15}}},
+      plugins: {
+        legend: {labels: {boxWidth: 14, font: {size: 10}}},
+        tooltip: {callbacks: {label: (ctx) => {
+          if (ctx.dataset.type === 'line') return `平均 ${Math.round(ctx.parsed.y)}`;
+          const r = ctx.raw;
+          return `${r[0]}~${r[1]} (差 ${r[1]-r[0]})`;
+        }}}
+      }
+    }
+  });
+}
+
+async function loadData({days, from, to} = {}) {
+  let url = '/api/raw?';
+  if (from && to) url += `from=${from}&to=${to}`;
+  else url += `days=${days || 30}`;
+  rawRows = await (await fetch(url)).json();
+  applyFiltersAndDraw();
+}
+
+function clearActiveRangeBtn() {
+  document.querySelectorAll('.trend-range-btn').forEach(b => {
+    b.classList.remove('bg-blue-100', 'text-blue-700', 'font-medium');
+    b.classList.add('hover:bg-slate-100');
+  });
+}
+
+// Range buttons
+document.querySelectorAll('.trend-range-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    clearActiveRangeBtn();
+    btn.classList.add('bg-blue-100', 'text-blue-700', 'font-medium');
+    btn.classList.remove('hover:bg-slate-100');
+    document.getElementById('dateFrom').value = '';
+    document.getElementById('dateTo').value = '';
+    loadData({days: parseInt(btn.dataset.days)});
+  });
+});
+
+// Custom date range
+async function setupDatePicker() {
+  const r = await (await fetch('/api/date_range')).json();
+  if (r.lo && r.hi) {
+    document.getElementById('dateFrom').min = r.lo;
+    document.getElementById('dateFrom').max = r.hi;
+    document.getElementById('dateTo').min = r.lo;
+    document.getElementById('dateTo').max = r.hi;
+  }
+}
+setupDatePicker();
+
+document.getElementById('dateApplyBtn').addEventListener('click', () => {
+  const from = document.getElementById('dateFrom').value;
+  const to = document.getElementById('dateTo').value;
+  if (!from || !to) { alert('請選擇起訖日期'); return; }
+  if (from > to) { alert('起始日期不可晚於結束日期'); return; }
+  clearActiveRangeBtn();
+  loadData({from, to});
+});
+
+document.getElementById('dateClearBtn').addEventListener('click', () => {
+  document.getElementById('dateFrom').value = '';
+  document.getElementById('dateTo').value = '';
+  document.querySelector('.trend-range-btn[data-days="30"]').click();
+});
+
+// Filter chips
+document.querySelectorAll('.filter-chip').forEach(btn => {
+  btn.addEventListener('click', () => {
+    btn.classList.toggle('active');
+    applyFiltersAndDraw();
+  });
+});
+
+document.getElementById('aggregateMode').addEventListener('change', applyFiltersAndDraw);
+
+loadData({days: 30});
+</script>
+
+{% endblock %}

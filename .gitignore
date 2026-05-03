@@ -1,0 +1,52 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+.pytest_cache/
+
+# venv
+venv/
+.venv/
+env/
+
+# OCR 中間產物 (可從 input PDF + scripts 重建)
+phase1_ocr/pages/*.png
+phase1_ocr/ocr_raw/
+
+# SQLite 暫存 (WAL / SHM 是 lock 檔,不該進 git;但 .db 會被追蹤)
+phase2_db/*.db-wal
+phase2_db/*.db-shm
+phase2_db/*.db.bak
+phase2_db/uploads/
+phase2_db/backups/
+
+# Excel lock 檔 (Excel 開啟時的暫存)
+**/~$*.xlsx
+
+# Exports
+exports/*.xml
+exports/*.zip
+
+# 其他 PDF (保留原始輸入)
+*.pdf
+!phase1_ocr/input/血壓原始檔.pdf
+
+# PyInstaller build 殘留
+build/
+dist/
+*.spec.bak
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editor
+.vscode/
+.idea/
+
+# Secrets
+.env
+*.key

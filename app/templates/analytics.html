@@ -1,0 +1,318 @@
+{% extends "base.html" %}
+{% block title %}進階分析{% endblock %}
+{% block content %}
+
+<div class="flex items-center justify-between mb-4">
+  <h1 class="text-2xl font-bold">📊 進階分析</h1>
+  <div class="text-sm text-slate-500">總樣本 {{ data.n_total }} 筆</div>
+</div>
+
+{% if data.n_total == 0 %}
+<div class="bg-amber-50 border border-amber-200 p-4 rounded-lg text-amber-800">
+  目前資料庫無血壓紀錄,請先匯入或新增資料。
+</div>
+{% else %}
+
+<!-- 規則式摘要 -->
+<div class="bg-white p-4 rounded-lg shadow-sm border border-slate-200 mb-6">
+  <h2 class="font-bold mb-3">📝 自動分析摘要</h2>
+  <ul class="text-sm space-y-1.5 text-slate-700">
+    {% for s in data.summary %}
+      <li class="flex gap-2"><span class="text-slate-400 flex-shrink-0">·</span><span>{{ s }}</span></li>
+    {% endfor %}
+  </ul>
+</div>
+
+<!-- 分級分布 (全期 vs 近 30 天) -->
+<div class="bg-white p-4 rounded-lg shadow-sm border border-slate-200 mb-6">
+  <h2 class="font-bold mb-3">血壓分級分布</h2>
+  <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+    <div>
+      <div class="text-sm text-slate-600 mb-2">全期 ({{ data.distribution.all_total }} 筆)</div>
+      <div style="height: 220px;"><canvas id="distAllChart"></canvas></div>
+    </div>
+    <div>
+      <div class="text-sm text-slate-600 mb-2">近 30 天 ({{ data.distribution.recent_total }} 筆)</div>
+      <div style="height: 220px;"><canvas id="distRecentChart"></canvas></div>
+    </div>
+  </div>
+</div>
+
+<!-- 達標率 + 變異係數 -->
+<div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
+  <div class="bg-white p-4 rounded-lg shadow-sm border border-slate-200">
+    <h3 class="font-bold mb-3">達標率 <span class="text-xs text-slate-500 font-normal">(當日平均 &lt;130/80)</span></h3>
+    <div class="grid grid-cols-2 gap-3">
+      {% for ar, label in [(data.achievement_30, '近 30 天'), (data.achievement_90, '近 90 天')] %}
+      <div class="border border-slate-200 rounded-lg p-3 text-center">
+        <div class="text-xs text-slate-500">{{ label }}</div>
+        {% if ar.rate is not none %}
+          <div class="text-3xl font-bold mt-1
+            {% if ar.rate >= 0.7 %}text-green-600
+            {% elif ar.rate >= 0.4 %}text-amber-600
+            {% else %}text-red-600{% endif %}">
+            {{ (ar.rate * 100)|round|int }}%
+          </div>
+          <div class="text-xs text-slate-500 mt-1">{{ ar.days_in_target }}/{{ ar.days_with_data }} 天</div>
+        {% else %}
+          <div class="text-slate-400">資料不足</div>
+        {% endif %}
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+
+  <div class="bg-white p-4 rounded-lg shadow-sm border border-slate-200">
+    <h3 class="font-bold mb-3">變異係數 (CV) <span class="text-xs text-slate-500 font-normal">血壓穩定度</span></h3>
+    <div class="grid grid-cols-2 gap-3">
+      {% for cv, label in [(data.cv_30, '近 30 天'), (data.cv_90, '近 90 天')] %}
+      <div class="border border-slate-200 rounded-lg p-3 text-center">
+        <div class="text-xs text-slate-500">{{ label }}</div>
+        {% if cv.sys_cv is not none %}
+          {% set pct = (cv.sys_cv * 100)|round(1) %}
+          <div class="text-2xl font-bold mt-1
+            {% if pct < 10 %}text-green-600
+            {% elif pct < 15 %}text-amber-600
+            {% else %}text-red-600{% endif %}">{{ pct }}%</div>
+          <div class="text-xs text-slate-500 mt-1">
+            {% if pct < 10 %}穩定{% elif pct < 15 %}中等{% else %}偏大{% endif %}
+            · σ={{ cv.sys_sd|round(1) }}
+          </div>
+        {% else %}
+          <div class="text-slate-400">資料不足</div>
+        {% endif %}
+      </div>
+      {% endfor %}
+    </div>
+    <div class="text-xs text-slate-400 mt-2">CV &lt; 10% 穩定 / 10–15% 中等 / &gt; 15% 偏大</div>
+  </div>
+</div>
+
+<!-- 週趨勢回歸 -->
+<div class="bg-white p-4 rounded-lg shadow-sm border border-slate-200 mb-6">
+  <h2 class="font-bold mb-3">週平均趨勢 <span class="text-xs text-slate-500 font-normal">(近 24 週,線性回歸)</span></h2>
+  {% if data.weekly_trend and data.weekly_trend.n_weeks >= 3 %}
+    <div class="flex gap-6 text-sm mb-3 flex-wrap">
+      {% set wt = data.weekly_trend %}
+      <div>
+        <span class="text-slate-500">收縮壓 slope:</span>
+        <span class="font-mono font-bold
+          {% if wt.sys_slope > 0.3 %}text-red-600
+          {% elif wt.sys_slope < -0.3 %}text-green-600
+          {% else %}text-slate-700{% endif %}">
+          {{ wt.sys_slope|round(3) }}
+        </span>
+        <span class="text-slate-500 text-xs">mmHg/週 (R²={{ wt.sys_r2|round(2) }})</span>
+      </div>
+      <div>
+        <span class="text-slate-500">舒張壓 slope:</span>
+        <span class="font-mono font-bold
+          {% if wt.dia_slope > 0.3 %}text-red-600
+          {% elif wt.dia_slope < -0.3 %}text-green-600
+          {% else %}text-slate-700{% endif %}">
+          {{ wt.dia_slope|round(3) }}
+        </span>
+        <span class="text-slate-500 text-xs">mmHg/週 (R²={{ wt.dia_r2|round(2) }})</span>
+      </div>
+    </div>
+    <div style="height: 280px;"><canvas id="weeklyChart"></canvas></div>
+  {% else %}
+    <div class="text-slate-400 text-sm">資料不足以擬合趨勢線(至少需要 3 週資料)</div>
+  {% endif %}
+</div>
+
+<!-- 季節性 (按月) -->
+<div class="bg-white p-4 rounded-lg shadow-sm border border-slate-200 mb-6">
+  <h2 class="font-bold mb-3">季節性分布 <span class="text-xs text-slate-500 font-normal">(各月平均,合併不同年份)</span></h2>
+  {% if data.seasonal.months_with_data >= 2 %}
+    <div style="height: 260px;"><canvas id="seasonalChart"></canvas></div>
+  {% else %}
+    <div class="text-slate-400 text-sm">至少需要 2 個月以上的資料才能比較季節性 (目前 {{ data.seasonal.months_with_data }} 個月有資料)</div>
+  {% endif %}
+</div>
+
+<!-- 箱形圖:8 組 (period × arm × seq) 收縮壓分布 -->
+<div class="bg-white p-4 rounded-lg shadow-sm border border-slate-200 mb-6">
+  <h2 class="font-bold mb-3">收縮壓分布 <span class="text-xs text-slate-500 font-normal">(8 組 → period × 手 × 次序,自繪箱形圖)</span></h2>
+  {% if data.boxplot %}
+    <div style="height: 320px;"><canvas id="boxplotChart"></canvas></div>
+    <div class="text-xs text-slate-400 mt-2">每組顯示 [min, Q1, median, Q3, max],箱體內為 IQR (50% 中段資料)</div>
+  {% else %}
+    <div class="text-slate-400 text-sm">資料不足</div>
+  {% endif %}
+</div>
+
+<!-- 相關係數 -->
+<div class="bg-white p-4 rounded-lg shadow-sm border border-slate-200 mb-6">
+  <h2 class="font-bold mb-3">Pearson 相關係數</h2>
+  <div class="grid grid-cols-1 md:grid-cols-3 gap-3">
+    {% for key, label, hint in [
+      ('sys_dia', '收縮 vs 舒張', '通常正相關'),
+      ('sys_pulse', '收縮 vs 心跳', '弱~中正相關常見'),
+      ('sys_temp', '收縮 vs 氣溫', '通常負相關 (天冷血壓高)')
+    ] %}
+    {% set r = data.correlations[key] %}
+    <div class="border border-slate-200 rounded-lg p-3">
+      <div class="text-xs text-slate-500">{{ label }}</div>
+      {% if r is not none %}
+        <div class="text-2xl font-mono font-bold mt-1
+          {% if r > 0.5 %}text-red-600
+          {% elif r > 0.3 %}text-orange-500
+          {% elif r < -0.5 %}text-blue-700
+          {% elif r < -0.3 %}text-blue-500
+          {% else %}text-slate-600{% endif %}">{{ r|round(3) }}</div>
+        <div class="text-xs text-slate-500 mt-1">
+          {% if r|abs > 0.5 %}強相關
+          {% elif r|abs > 0.3 %}中等相關
+          {% elif r|abs > 0.1 %}弱相關
+          {% else %}無顯著{% endif %} · {{ hint }}
+        </div>
+        {% if key == 'sys_temp' %}
+          <div class="text-xs text-slate-400 mt-1">樣本 {{ data.correlations.temp_n }} 筆 (需有氣溫紀錄)</div>
+        {% endif %}
+      {% else %}
+        <div class="text-slate-400 mt-1">資料不足</div>
+      {% endif %}
+    </div>
+    {% endfor %}
+  </div>
+  <div class="text-xs text-slate-400 mt-3">|r| &gt; 0.5 強 / 0.3–0.5 中 / 0.1–0.3 弱 (不代表因果)</div>
+</div>
+
+<script>
+const distData = {{ data.distribution | tojson }};
+const seasonal = {{ data.seasonal | tojson }};
+const weekly = {{ data.weekly_trend | tojson }};
+const boxplot = {{ data.boxplot | tojson }};
+
+const LEVEL_LABELS = {normal:'正常', elevated:'偏高', stage1:'1 級', stage2:'2 級', crisis:'危象'};
+const LEVEL_COLORS = {normal:'#16a34a', elevated:'#facc15', stage1:'#fb923c', stage2:'#ef4444', crisis:'#7f1d1d'};
+
+function pieDist(canvasId, counts, total) {
+  const labels = distData.levels.map(k => LEVEL_LABELS[k]);
+  const data = distData.levels.map(k => counts[k]);
+  const colors = distData.levels.map(k => LEVEL_COLORS[k]);
+  return new Chart(document.getElementById(canvasId), {
+    type: 'doughnut',
+    data: {labels, datasets: [{data, backgroundColor: colors, borderWidth: 1}]},
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: {
+        legend: {position: 'right', labels: {boxWidth: 14, font: {size: 11}}},
+        tooltip: {callbacks: {label: (ctx) => {
+          const pct = total ? (ctx.parsed * 100 / total).toFixed(1) : 0;
+          return `${ctx.label}: ${ctx.parsed} 筆 (${pct}%)`;
+        }}}
+      }
+    }
+  });
+}
+
+if (distData.all_total) pieDist('distAllChart', distData.all, distData.all_total);
+if (distData.recent_total) pieDist('distRecentChart', distData.recent, distData.recent_total);
+
+// 週趨勢
+if (weekly && weekly.n_weeks >= 3) {
+  const xs = weekly.weeks;
+  const sysData = weekly.sys_means;
+  const diaData = weekly.dia_means;
+  // 回歸線
+  const sysFit = xs.map((_, i) => weekly.sys_slope * i + (sysData.length ? (
+    sysData.reduce((s,v,j)=>v!=null?(s+v-weekly.sys_slope*j):s,0) /
+    sysData.filter(v=>v!=null).length
+  ) : 0));
+  new Chart(document.getElementById('weeklyChart'), {
+    type: 'line',
+    data: {
+      labels: xs,
+      datasets: [
+        {label:'收縮 週平均', data:sysData, borderColor:'#dc2626', backgroundColor:'#dc262620', tension:0.2, pointRadius:3, spanGaps:true},
+        {label:'收縮 趨勢線', data:sysFit, borderColor:'#dc2626', borderDash:[6,4], borderWidth:1.2, pointRadius:0, fill:false},
+        {label:'舒張 週平均', data:diaData, borderColor:'#2563eb', backgroundColor:'#2563eb20', tension:0.2, pointRadius:3, spanGaps:true},
+      ]
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      scales: {y: {min:50, max:170, title: {display:true, text:'mmHg'}}},
+      plugins: {legend: {labels: {boxWidth: 14, font: {size: 11}}}}
+    }
+  });
+}
+
+// 季節性
+if (seasonal.months_with_data >= 2) {
+  const labels = seasonal.months.map(m => `${m.month} 月`);
+  const sysData = seasonal.months.map(m => m.sys_mean);
+  const diaData = seasonal.months.map(m => m.dia_mean);
+  new Chart(document.getElementById('seasonalChart'), {
+    type: 'bar',
+    data: {
+      labels,
+      datasets: [
+        {label:'收縮平均', data:sysData, backgroundColor:'rgba(220,38,38,0.6)', borderColor:'#dc2626', borderWidth:1},
+        {label:'舒張平均', data:diaData, backgroundColor:'rgba(37,99,235,0.6)', borderColor:'#2563eb', borderWidth:1},
+      ]
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      scales: {y: {min:50, max:160, title:{display:true, text:'mmHg'}}},
+      plugins: {
+        legend: {labels: {boxWidth: 14, font: {size: 11}}},
+        tooltip: {callbacks: {afterLabel: (ctx) => {
+          const m = seasonal.months[ctx.dataIndex];
+          return `樣本 ${m.n} 筆`;
+        }}}
+      }
+    }
+  });
+}
+
+// 箱形圖 (自繪 — 用 floating bar 模擬 box,加 whisker line)
+if (boxplot && boxplot.length) {
+  const labels = boxplot.map(b => b.label);
+  const boxRange = boxplot.map(b => [b.q1, b.q3]);  // 主箱體 (Q1-Q3)
+  const whiskerRange = boxplot.map(b => [b.min, b.max]);  // 鬚 (min-max)
+  const medianPoints = boxplot.map(b => b.median);
+  new Chart(document.getElementById('boxplotChart'), {
+    data: {
+      labels,
+      datasets: [
+        {
+          type: 'bar', label: '鬚 (min~max)', data: whiskerRange,
+          backgroundColor: 'rgba(148,163,184,0.25)', borderColor: '#94a3b8',
+          borderWidth: 1, barPercentage: 0.15, categoryPercentage: 0.7,
+          borderSkipped: false,
+        },
+        {
+          type: 'bar', label: '箱體 (Q1~Q3, IQR)', data: boxRange,
+          backgroundColor: 'rgba(37,99,235,0.45)', borderColor: '#2563eb',
+          borderWidth: 1.5, barPercentage: 0.7, categoryPercentage: 0.7,
+          borderSkipped: false,
+        },
+        {
+          type: 'line', label: '中位數', data: medianPoints,
+          borderColor: '#dc2626', backgroundColor: '#dc2626',
+          pointStyle: 'rect', pointRadius: 8, pointBorderWidth: 0,
+          showLine: false,
+        },
+      ],
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      scales: {y: {min: 60, max: 200, title: {display: true, text: '收縮壓 mmHg'}}},
+      plugins: {
+        legend: {labels: {boxWidth: 14, font: {size: 11}}},
+        tooltip: {callbacks: {label: (ctx) => {
+          const b = boxplot[ctx.dataIndex];
+          if (ctx.dataset.type === 'line') return `中位數 ${b.median.toFixed(0)} (n=${b.n})`;
+          if (ctx.datasetIndex === 0) return `min ${b.min} / max ${b.max}`;
+          return `Q1 ${b.q1.toFixed(0)} / Q3 ${b.q3.toFixed(0)} (IQR ${(b.q3-b.q1).toFixed(0)})`;
+        }}}
+      }
+    }
+  });
+}
+</script>
+
+{% endif %}
+{% endblock %}

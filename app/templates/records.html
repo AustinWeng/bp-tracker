@@ -1,0 +1,90 @@
+{% extends "base.html" %}
+{% block title %}記錄列表{% endblock %}
+{% block content %}
+
+<div class="flex items-center justify-between mb-4">
+  <h1 class="text-2xl font-bold">記錄列表 <span class="text-sm text-slate-500 font-normal">共 {{ total }} 筆</span></h1>
+  <div class="flex gap-2">
+    <input type="text" id="filterInput" placeholder="搜尋日期、備註..." class="px-3 py-2 border border-slate-300 rounded text-sm w-48">
+    <a href="{{ url_for('add_record') }}" class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded">+ 新增</a>
+  </div>
+</div>
+
+{% set focus_date = request.args.get('focus', '') %}
+{% if focus_date %}
+<div id="focusBanner" class="mb-3 px-4 py-2 bg-amber-100 border border-amber-300 text-amber-900 rounded flex items-center justify-between text-sm">
+  <span>🎯 已從儀表板跳轉,聚焦日期 <strong>{{ focus_date }}</strong> (共 {{ rows | selectattr('measure_date', 'equalto', focus_date) | list | length }} 筆)</span>
+  <a href="{{ url_for('records_list') }}" class="text-amber-700 hover:underline">取消聚焦</a>
+</div>
+{% endif %}
+
+<div class="bg-white rounded-lg shadow-sm border border-slate-200 overflow-x-auto">
+  <table class="w-full text-sm" id="recordsTable">
+    <thead class="bg-slate-50 border-b border-slate-200">
+      <tr>
+        <th class="px-3 py-2 text-left">日期</th>
+        <th class="px-3 py-2 text-left">時段</th>
+        <th class="px-3 py-2 text-left">時刻</th>
+        <th class="px-3 py-2 text-left">手/次</th>
+        <th class="px-3 py-2 text-right">收縮</th>
+        <th class="px-3 py-2 text-right">舒張</th>
+        <th class="px-3 py-2 text-right">心跳</th>
+        <th class="px-3 py-2 text-left">來源</th>
+        <th class="px-3 py-2 text-left">備註</th>
+        <th class="px-3 py-2"></th>
+      </tr>
+    </thead>
+    <tbody>
+      {% set source_color = {'manual':'bg-green-100 text-green-800','edit':'bg-blue-100 text-blue-800','ocr_v1':'bg-slate-100 text-slate-600','ocr_v2':'bg-amber-100 text-amber-800'} %}
+      {% for r in rows %}
+      <tr data-date="{{ r.measure_date }}" class="border-b border-slate-100 hover:bg-slate-50 {% if r.source == 'ocr_v1' %}opacity-70{% endif %} {% if focus_date and r.measure_date|string == focus_date %}row-focused{% endif %}">
+        <td class="px-3 py-2">{{ r.measure_date }}</td>
+        <td class="px-3 py-2">{{ r.period }}</td>
+        <td class="px-3 py-2">{{ r.measure_time or '-' }}</td>
+        <td class="px-3 py-2">{{ r.arm }}{{ r.sequence }}</td>
+        <td class="px-3 py-2 text-right font-mono">{{ r.systolic or '-' }}</td>
+        <td class="px-3 py-2 text-right font-mono">{{ r.diastolic or '-' }}</td>
+        <td class="px-3 py-2 text-right font-mono">{{ r.pulse or '-' }}</td>
+        <td class="px-3 py-2"><span class="text-xs px-2 py-0.5 rounded {{ source_color.get(r.source, 'bg-slate-100') }}">{{ r.source }}</span></td>
+        <td class="px-3 py-2 text-xs text-slate-500 max-w-[200px] truncate">{{ r.notes or '' }}</td>
+        <td class="px-3 py-2 text-right">
+          <a href="{{ url_for('edit_record', rid=r.id) }}" class="text-blue-600 hover:underline text-xs">編輯</a>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+<style>
+.row-focused {
+  background: linear-gradient(90deg, rgba(251,191,36,0.35) 0%, rgba(251,191,36,0.18) 100%) !important;
+  border-left: 4px solid #f59e0b;
+  animation: rowPulse 1.4s ease-out 2;
+}
+@keyframes rowPulse {
+  0%   { box-shadow: 0 0 0 0 rgba(245,158,11,0.6); }
+  60%  { box-shadow: 0 0 0 8px rgba(245,158,11,0); }
+  100% { box-shadow: 0 0 0 0 rgba(245,158,11,0); }
+}
+</style>
+
+<script>
+const filterInput = document.getElementById('filterInput');
+const tbody = document.querySelector('#recordsTable tbody');
+const rows = [...tbody.querySelectorAll('tr')];
+filterInput.addEventListener('input', () => {
+  const q = filterInput.value.toLowerCase().trim();
+  for (const r of rows) {
+    r.style.display = !q || r.textContent.toLowerCase().includes(q) ? '' : 'none';
+  }
+});
+
+// Auto-scroll to first focused row
+const focused = document.querySelector('.row-focused');
+if (focused) {
+  setTimeout(() => focused.scrollIntoView({behavior: 'smooth', block: 'center'}), 100);
+}
+</script>
+
+{% endblock %}

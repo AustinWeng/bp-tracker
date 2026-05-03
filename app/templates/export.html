@@ -1,0 +1,30 @@
+{% extends "base.html" %}
+{% block title %}匯出 Apple Health{% endblock %}
+{% block content %}
+
+<h1 class="text-2xl font-bold mb-4">匯出到 Apple Health</h1>
+
+<div class="bg-white p-6 rounded-lg shadow-sm border border-slate-200 max-w-2xl">
+  <p class="mb-4">下載含所有血壓 + 心跳資料的 XML 檔,用 iPhone 上的 <strong>Health Import</strong> App (App Store 免費) 或自訂 Shortcut 匯入到「健康」。</p>
+
+  <a href="{{ url_for('export_health_xml') }}" class="inline-block bg-blue-600 hover:bg-blue-700 text-white px-6 py-3 rounded font-medium">
+    📥 下載 Apple Health XML
+  </a>
+
+  <div class="mt-6 text-sm text-slate-600">
+    <h3 class="font-bold text-slate-900 mb-2">iPhone 匯入步驟</h3>
+    <ol class="list-decimal list-inside space-y-1">
+      <li>在 iPhone App Store 安裝「Health Import」(免費)</li>
+      <li>用 AirDrop / iCloud / Email 把下載的 XML 傳到 iPhone</li>
+      <li>iPhone 上點 XML 檔,選擇用 Health Import 開啟</li>
+      <li>App 會顯示要匯入的記錄數,點確認</li>
+      <li>打開「健康」App → 瀏覽 → 心臟 → 血壓,確認資料已進入</li>
+    </ol>
+  </div>
+
+  <div class="mt-4 text-xs text-slate-500 border-t border-slate-200 pt-4">
+    <strong>注意:</strong>每次匯出包含所有資料。Apple Health 會去重複,但若你已匯入過,可能會看到重複項目,可在健康 App 中手動刪除。
+  </div>
+</div>
+
+{% endblock %}

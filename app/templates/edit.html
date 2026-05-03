@@ -1,0 +1,44 @@
+{% extends "base.html" %}
+{% block title %}編輯記錄{% endblock %}
+{% block content %}
+
+<h1 class="text-2xl font-bold mb-2">編輯記錄</h1>
+<div class="text-sm text-slate-500 mb-6">{{ row.measure_date }} {{ row.period }} {{ row.arm }}{{ row.sequence }} {% if row.source_ref %}(來源: {{ row.source_ref }}){% endif %}</div>
+
+<form method="post" class="bg-white p-6 rounded-lg shadow-sm border border-slate-200 max-w-md">
+  <div class="grid grid-cols-3 gap-3 mb-4">
+    <div>
+      <label class="block text-sm font-medium mb-1">收縮</label>
+      <input type="number" name="systolic" value="{{ row.systolic or '' }}" min="50" max="280" inputmode="numeric" class="w-full px-3 py-2 border border-slate-300 rounded text-center">
+    </div>
+    <div>
+      <label class="block text-sm font-medium mb-1">舒張</label>
+      <input type="number" name="diastolic" value="{{ row.diastolic or '' }}" min="30" max="160" inputmode="numeric" class="w-full px-3 py-2 border border-slate-300 rounded text-center">
+    </div>
+    <div>
+      <label class="block text-sm font-medium mb-1">心跳</label>
+      <input type="number" name="pulse" value="{{ row.pulse or '' }}" min="30" max="220" inputmode="numeric" class="w-full px-3 py-2 border border-slate-300 rounded text-center">
+    </div>
+  </div>
+
+  <div class="mb-4">
+    <label class="block text-sm font-medium mb-1">時刻</label>
+    <input type="time" name="measure_time" value="{{ row.measure_time or '' }}" class="w-full px-3 py-2 border border-slate-300 rounded">
+  </div>
+
+  <div class="mb-4">
+    <label class="block text-sm font-medium mb-1">備註</label>
+    <textarea name="notes" rows="2" class="w-full px-3 py-2 border border-slate-300 rounded">{{ row.notes or '' }}</textarea>
+  </div>
+
+  <div class="flex gap-3">
+    <button type="submit" class="bg-blue-600 hover:bg-blue-700 text-white px-6 py-2 rounded font-medium">儲存</button>
+    <a href="{{ url_for('records_list') }}" class="px-6 py-2 rounded border border-slate-300 hover:bg-slate-50">取消</a>
+  </div>
+</form>
+
+<form method="post" action="{{ url_for('delete_record', rid=row.id) }}" class="mt-4" onsubmit="return confirm('確定要刪除這筆記錄嗎?')">
+  <button type="submit" class="text-red-600 hover:underline text-sm">刪除這筆記錄</button>
+</form>
+
+{% endblock %}

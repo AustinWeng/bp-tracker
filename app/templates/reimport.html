@@ -1,0 +1,93 @@
+{% extends "base.html" %}
+{% block title %}重新匯入校正版 Excel{% endblock %}
+{% block content %}
+
+<h1 class="text-2xl font-bold mb-2">重新匯入校正版 Excel</h1>
+<p class="text-sm text-slate-600 mb-6">將你校對過的 <code>bp_ocr_review.xlsx</code> 上傳,系統會把 OCR 資料整批替換,但保留你手動輸入/編輯的記錄。</p>
+
+<!-- Current DB stats -->
+<div class="bg-white p-4 rounded-lg shadow-sm border border-slate-200 mb-6 max-w-2xl">
+  <h2 class="font-bold mb-3">目前資料庫狀態</h2>
+  <table class="text-sm w-full">
+    <tr class="border-b border-slate-100"><td class="py-1 text-slate-500">總筆數</td><td class="py-1 text-right font-mono">{{ stats.total }}</td></tr>
+    {% set source_color = {'manual':'green','edit':'blue','ocr_v1':'gray','ocr_v2':'amber'} %}
+    {% set source_label = {'manual':'手動輸入','edit':'網頁編輯','ocr_v1':'OCR 未校對','ocr_v2':'OCR 已校對'} %}
+    {% for src, n in stats.by_source.items() %}
+    <tr class="border-b border-slate-100">
+      <td class="py-1"><span class="text-xs px-2 py-0.5 rounded bg-{{ source_color.get(src,'gray') }}-100 text-{{ source_color.get(src,'gray') }}-800">{{ src }}</span> {{ source_label.get(src, src) }}</td>
+      <td class="py-1 text-right font-mono">{{ n }}</td>
+    </tr>
+    {% endfor %}
+    <tr><td class="py-1 text-slate-500 text-xs">最後更新</td><td class="py-1 text-right text-xs text-slate-500">{{ stats.last_update or '-' }}</td></tr>
+  </table>
+</div>
+
+<!-- Upload form -->
+<form method="post" enctype="multipart/form-data" class="bg-white p-6 rounded-lg shadow-sm border border-slate-200 max-w-2xl">
+  <div class="mb-4">
+    <label class="block text-sm font-medium mb-2">選擇校對版 Excel 檔</label>
+    <input type="file" name="excel" accept=".xlsx" required class="w-full text-sm border border-slate-300 rounded p-2">
+    <div class="text-xs text-slate-500 mt-1">必須是從本系統產生的 <code>bp_ocr_review.xlsx</code> 格式 (含「校對檢視」分頁)</div>
+  </div>
+
+  <div class="mb-4">
+    <label class="block text-sm font-medium mb-2">匯入模式</label>
+    <div class="space-y-2">
+      <label class="flex items-start gap-2 cursor-pointer">
+        <input type="radio" name="mode" value="verified" checked class="mt-1">
+        <div>
+          <div class="font-medium text-sm">校對版 (建議)</div>
+          <div class="text-xs text-slate-500">只匯入「校對狀態」= 已確認 / 已修正 的列,標 source = ocr_v2</div>
+        </div>
+      </label>
+      <label class="flex items-start gap-2 cursor-pointer">
+        <input type="radio" name="mode" value="unverified" class="mt-1">
+        <div>
+          <div class="font-medium text-sm">全部匯入 (未校對)</div>
+          <div class="text-xs text-slate-500">不論校對狀態全部匯入,標 source = ocr_v1</div>
+        </div>
+      </label>
+    </div>
+  </div>
+
+  <div class="bg-amber-50 border border-amber-200 rounded p-3 mb-4 text-sm">
+    <div class="font-medium text-amber-900 mb-1">⚠️ 匯入流程</div>
+    <ol class="list-decimal list-inside text-amber-800 text-xs space-y-1">
+      <li>所有現有 OCR 資料 (source = ocr_v1 或 ocr_v2) 會被刪除</li>
+      <li>你手動輸入的資料 (source = manual / edit) 完全保留</li>
+      <li>從上傳的 Excel 重新匯入</li>
+      <li>無法復原 — 如有疑慮,請先備份 <code>{{ stats.last_update }}</code> 的資料庫</li>
+    </ol>
+  </div>
+
+  <button type="submit" class="bg-blue-600 hover:bg-blue-700 text-white px-6 py-2 rounded font-medium">上傳並重新匯入</button>
+</form>
+
+{% if result %}
+<div class="mt-6 bg-white p-4 rounded-lg shadow-sm border-2 {{ 'border-green-500' if result.ok else 'border-red-500' }} max-w-2xl">
+  <h3 class="font-bold mb-2 {{ 'text-green-700' if result.ok else 'text-red-700' }}">
+    {{ '✅ ' if result.ok else '❌ ' }}{{ result.msg }}
+  </h3>
+  {% if result.saved_path %}
+    <div class="text-xs text-slate-500 mb-2">備份路徑: <code>{{ result.saved_path }}</code></div>
+  {% endif %}
+  {% if result.stdout %}
+    <details open class="mt-2">
+      <summary class="text-sm font-medium cursor-pointer">匯入細節</summary>
+      <pre class="text-xs bg-slate-50 p-3 rounded mt-2 overflow-x-auto whitespace-pre-wrap">{{ result.stdout }}</pre>
+    </details>
+  {% endif %}
+  {% if result.stderr %}
+    <details class="mt-2">
+      <summary class="text-sm font-medium cursor-pointer text-red-700">錯誤訊息</summary>
+      <pre class="text-xs bg-red-50 p-3 rounded mt-2 overflow-x-auto whitespace-pre-wrap text-red-900">{{ result.stderr }}</pre>
+    </details>
+  {% endif %}
+  <div class="mt-4 flex gap-2">
+    <a href="{{ url_for('dashboard') }}" class="bg-blue-600 text-white px-4 py-2 rounded text-sm">回儀表板</a>
+    <a href="{{ url_for('records_list') }}" class="border border-slate-300 px-4 py-2 rounded text-sm">看記錄</a>
+  </div>
+</div>
+{% endif %}
+
+{% endblock %}
