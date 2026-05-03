@@ -54,8 +54,14 @@ echo "  停止: 按 Ctrl+C"
 echo "═══════════════════════════════════════════"
 echo ""
 
-(sleep 2 && (command -v open >/dev/null && open "http://localhost:$PORT" || \
-             command -v xdg-open >/dev/null && xdg-open "http://localhost:$PORT" || \
-             echo "請手動開啟瀏覽器到 http://localhost:$PORT")) &
+(sleep 2 && (
+    if command -v open >/dev/null 2>&1; then
+        open "http://localhost:$PORT"
+    elif command -v xdg-open >/dev/null 2>&1; then
+        xdg-open "http://localhost:$PORT"
+    else
+        echo "請手動開啟瀏覽器到 http://localhost:$PORT"
+    fi
+)) &
 
 PORT=$PORT "$VENV_DIR/bin/python" run.py
