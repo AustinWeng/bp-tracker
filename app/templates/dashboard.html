@@ -27,24 +27,22 @@
 
   <div class="bg-white p-4 rounded-lg shadow-sm border border-slate-200">
     <div class="text-xs text-slate-500 mb-1">血壓分級 (近30天)</div>
-    {% set color_map = {'crisis':'bg-red-700 text-white','stage2':'bg-red-500 text-white','stage1':'bg-orange-400 text-white','elevated':'bg-yellow-400','normal':'bg-green-500 text-white','unknown':'bg-slate-300'} %}
-    <div class="inline-block px-3 py-1.5 rounded font-medium {{ color_map[classification] }}">{{ classification_label }}</div>
+    {% set _color_map = {} %}
+    {% for k, lab, sr, dr, cc in guideline.levels %}{% set _ = _color_map.update({k: cc}) %}{% endfor %}
+    {% set _color = _color_map.get(classification, 'bg-slate-300') %}
+    <div class="inline-block px-3 py-1.5 rounded font-medium {{ _color }}">{{ classification_label }}</div>
   </div>
 </div>
 
-<!-- BP Classification Reference (AHA/ACC 2017) -->
+<!-- BP Classification Reference (依目前 guideline) -->
 <div class="bg-white p-3 rounded-lg shadow-sm border border-slate-200 mb-6">
-  <div class="text-xs text-slate-500 mb-2">血壓分級標準 (AHA/ACC 2017,收縮 / 舒張 mmHg,任一達標即歸該級)</div>
-  <div class="grid grid-cols-2 md:grid-cols-5 gap-2 text-center text-sm">
-    {% set level_data = [
-      ('normal', '正常', '< 120', '< 80'),
-      ('elevated', '血壓偏高', '120 – 129', '< 80'),
-      ('stage1', '高血壓 1 級', '130 – 139', '80 – 89'),
-      ('stage2', '高血壓 2 級', '≥ 140', '≥ 90'),
-      ('crisis', '高血壓危象', '≥ 180', '≥ 120'),
-    ] %}
-    {% for key, label, sys_r, dia_r in level_data %}
-      <div class="border-2 rounded p-2 {% if classification == key %}{{ color_map[key] }} border-current ring-2 ring-offset-1 ring-current{% else %}border-slate-200 bg-slate-50{% endif %}">
+  <div class="text-xs text-slate-500 mb-2 flex items-center justify-between">
+    <span>血壓分級標準 ({{ guideline.label }},收縮 / 舒張 mmHg,任一達標即歸該級)</span>
+    <a href="{{ url_for('settings_page') }}" class="text-blue-600 hover:underline">變更指引 →</a>
+  </div>
+  <div class="grid grid-cols-2 md:grid-cols-{{ guideline.levels|length }} gap-2 text-center text-sm">
+    {% for key, label, sys_r, dia_r, color_cls in guideline.levels %}
+      <div class="border-2 rounded p-2 {% if classification == key %}{{ color_cls }} border-current ring-2 ring-offset-1 ring-current{% else %}border-slate-200 bg-slate-50{% endif %}">
         <div class="font-medium {% if classification != key %}text-slate-700{% endif %}">{{ label }}{% if classification == key %} ★{% endif %}</div>
         <div class="text-xs mt-0.5 {% if classification != key %}text-slate-500{% endif %}">收縮 {{ sys_r }}</div>
         <div class="text-xs {% if classification != key %}text-slate-500{% endif %}">舒張 {{ dia_r }}</div>

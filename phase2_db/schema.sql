@@ -34,6 +34,15 @@ CREATE TABLE IF NOT EXISTS bp_records (
     UNIQUE(user_id, measure_date, period, sequence, arm)
 );
 
+-- Per-user settings (key/value) — e.g. preferred BP guideline ('aha2017' / 'esc2018' / 'tw2022')
+CREATE TABLE IF NOT EXISTS user_settings (
+    user_id INTEGER NOT NULL DEFAULT 1 REFERENCES users(id),
+    key TEXT NOT NULL,
+    value TEXT,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY(user_id, key)
+);
+
 -- Per-day context (temperature etc.)
 CREATE TABLE IF NOT EXISTS daily_context (
     user_id INTEGER NOT NULL DEFAULT 1 REFERENCES users(id),

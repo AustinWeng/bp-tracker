@@ -185,13 +185,18 @@ const seasonal = {{ data.seasonal | tojson }};
 const weekly = {{ data.weekly_trend | tojson }};
 const boxplot = {{ data.boxplot | tojson }};
 
-const LEVEL_LABELS = {normal:'正常', elevated:'偏高', stage1:'1 級', stage2:'2 級', crisis:'危象'};
-const LEVEL_COLORS = {normal:'#16a34a', elevated:'#facc15', stage1:'#fb923c', stage2:'#ef4444', crisis:'#7f1d1d'};
+// 全 BP guideline 都有對應顏色 (rotate 從 normal 到最嚴重)
+const LEVEL_COLORS = {
+  // AHA / TW
+  normal: '#16a34a', elevated: '#facc15', stage1: '#fb923c', stage2: '#ef4444', crisis: '#7f1d1d',
+  // ESC
+  optimal: '#15803d', high_normal: '#facc15', grade1: '#fb923c', grade2: '#ef4444', grade3: '#7f1d1d',
+};
 
 function pieDist(canvasId, counts, total) {
-  const labels = distData.levels.map(k => LEVEL_LABELS[k]);
+  const labels = distData.levels.map(k => distData.labels[k] || k);
   const data = distData.levels.map(k => counts[k]);
-  const colors = distData.levels.map(k => LEVEL_COLORS[k]);
+  const colors = distData.levels.map(k => LEVEL_COLORS[k] || '#94a3b8');
   return new Chart(document.getElementById(canvasId), {
     type: 'doughnut',
     data: {labels, datasets: [{data, backgroundColor: colors, borderWidth: 1}]},

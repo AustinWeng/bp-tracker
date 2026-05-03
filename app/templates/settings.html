@@ -1,0 +1,69 @@
+{% extends "base.html" %}
+{% block title %}設定{% endblock %}
+{% block content %}
+
+<h1 class="text-2xl font-bold mb-4">⚙️ 設定</h1>
+
+{% if saved %}
+<div class="mb-4 px-4 py-2 bg-green-100 border border-green-300 text-green-900 rounded text-sm">
+  ✓ 已儲存。儀表板與分析頁將立即套用新指引。
+</div>
+{% endif %}
+
+<div class="bg-white p-5 rounded-lg shadow-sm border border-slate-200 mb-6">
+  <h2 class="font-bold text-lg mb-2">血壓分級指引</h2>
+  <p class="text-sm text-slate-600 mb-4">
+    全系統的「血壓分級」、「達標率」、「自動摘要」會依照所選指引判讀。
+    切換後立即生效,**不會修改你的歷史資料**,只是改變顯示方式。
+  </p>
+
+  <form method="POST" class="space-y-3">
+    {% for gid, label in options %}
+      {% set meta = all_guidelines_meta[gid] %}
+      <label class="flex items-start gap-3 p-3 rounded border-2
+        {% if current_id == gid %}border-blue-500 bg-blue-50{% else %}border-slate-200 hover:bg-slate-50{% endif %}
+        cursor-pointer transition">
+        <input type="radio" name="guideline" value="{{ gid }}"
+               {% if current_id == gid %}checked{% endif %}
+               class="mt-1">
+        <div class="flex-1">
+          <div class="font-medium">{{ label }}
+            {% if current_id == gid %}<span class="text-xs text-blue-600 ml-2">目前使用</span>{% endif %}
+          </div>
+          <div class="text-xs text-slate-500 mt-1">
+            高血壓門檻
+            <span class="font-mono">
+              {% if gid == 'esc2018' %}≥ 140/90{% else %}≥ 130/80{% endif %}
+            </span>
+            · 達標目標
+            <span class="font-mono">&lt; {{ meta.target_sys }}/{{ meta.target_dia }}</span>
+            · 分 {{ meta.levels|length }} 級
+          </div>
+          <!-- mini level chips -->
+          <div class="mt-2 flex flex-wrap gap-1 text-xs">
+            {% for k, lab, sr, dr, color_cls in meta.levels %}
+              <span class="px-2 py-0.5 rounded {{ color_cls }}">{{ lab }}</span>
+            {% endfor %}
+          </div>
+        </div>
+      </label>
+    {% endfor %}
+
+    <div class="pt-3 flex gap-2">
+      <button type="submit" class="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded">儲存</button>
+      <a href="{{ url_for('dashboard') }}" class="px-4 py-2 border border-slate-300 hover:bg-slate-100 rounded">取消</a>
+    </div>
+  </form>
+</div>
+
+<div class="bg-amber-50 border border-amber-200 rounded p-4 text-sm text-amber-900">
+  <div class="font-medium mb-1">📖 指引差異速查</div>
+  <ul class="space-y-1 ml-4 list-disc">
+    <li><strong>AHA/ACC 2017</strong>(美國):2017 年大幅下修高血壓門檻為 130/80,使更多人歸為高血壓族群以促進早期介入。</li>
+    <li><strong>ESC/ESH 2018</strong>(歐洲):維持傳統 140/90 高血壓門檻;判讀較寬,符合多數歐洲與台灣 2017 年前的習慣。</li>
+    <li><strong>台灣高血壓學會 2022</strong>:採 130/80 門檻(與 AHA 一致),並引入 SPRINT 證據,**居家量測**之治療目標可進一步嚴格至 &lt;120/80(高心血管風險族群)。</li>
+  </ul>
+  <div class="mt-2 text-xs text-amber-700">本系統將所有量測視為居家量測。臨床診斷應以醫師評估為準。</div>
+</div>
+
+{% endblock %}

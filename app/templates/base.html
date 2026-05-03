@@ -20,6 +20,10 @@
         <a href="{{ url_for('add_record') }}" class="px-3 py-1.5 rounded hover:bg-blue-50 {% if request.endpoint=='add_record' %}bg-blue-100 text-blue-700 font-medium{% endif %}">新增</a>
         <a href="{{ url_for('export_page') }}" class="px-3 py-1.5 rounded hover:bg-blue-50 {% if request.endpoint=='export_page' %}bg-blue-100 text-blue-700 font-medium{% endif %}">匯出</a>
         <a href="{{ url_for('reimport_page') }}" class="px-3 py-1.5 rounded hover:bg-blue-50 {% if request.endpoint=='reimport_page' %}bg-blue-100 text-blue-700 font-medium{% endif %}">重匯入</a>
+        <a href="{{ url_for('settings_page') }}" class="px-3 py-1.5 rounded hover:bg-blue-50 {% if request.endpoint=='settings_page' %}bg-blue-100 text-blue-700 font-medium{% endif %}" title="設定">⚙️</a>
+      </div>
+      <div class="ml-auto text-xs text-slate-500">
+        指引: <span class="font-mono text-slate-700">{{ guideline.short }}</span>
       </div>
     </div>
   </nav>

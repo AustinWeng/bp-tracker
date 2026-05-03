@@ -4,26 +4,20 @@ import sys
 from datetime import date, datetime, timedelta
 from pathlib import Path
 
-from flask import abort, flash, jsonify, redirect, render_template, request, url_for, Response
+from flask import abort, flash, g, jsonify, redirect, render_template, request, url_for, Response
 
 from . import db
 from . import health_export
 from . import analytics
+from . import guidelines
 
 
-# AHA/ACC 2017 BP categories
-def classify_bp(sys_v, dia_v):
-    if sys_v is None or dia_v is None:
-        return ("unknown", "未知")
-    if sys_v >= 180 or dia_v >= 120:
-        return ("crisis", "高血壓危象")
-    if sys_v >= 140 or dia_v >= 90:
-        return ("stage2", "高血壓 2 級")
-    if sys_v >= 130 or dia_v >= 80:
-        return ("stage1", "高血壓 1 級")
-    if sys_v >= 120:
-        return ("elevated", "血壓偏高")
-    return ("normal", "正常")
+def classify_bp(sys_v, dia_v, guideline_id=None):
+    """Classify (sys, dia) using the chosen (or current) guideline."""
+    gid = guideline_id or getattr(g, "guideline_id", guidelines.DEFAULT_GUIDELINE)
+    key = guidelines.classify(sys_v, dia_v, gid)
+    label = guidelines.level_label(key, gid) if key != "unknown" else "未知"
+    return (key, label)
 
 
 def get_session_means(days_back=None):
@@ -112,6 +106,7 @@ def register(app):
         """)
         avg = recent_avg[0] if recent_avg else {"s": None, "d": None, "p": None}
         cls, cls_label = classify_bp(avg["s"], avg["d"])
+        gid = g.guideline_id
 
         # Phase 3 — 分析卡片資料 (近 30 天為主)
         recent_rows = db.query("""
@@ -130,11 +125,11 @@ def register(app):
         contexts = db.query("SELECT measure_date, temperature_c FROM daily_context WHERE temperature_c IS NOT NULL")
 
         insights = {
-            "morning_evening": analytics.morning_evening_compare(recent_rows),
+            "morning_evening": analytics.morning_evening_compare(recent_rows, guideline_id=gid),
             "left_right": analytics.left_right_diff(recent_rows),
             "weekly_trend": analytics.weekly_regression(all_rows, weeks_back=12),
-            "achievement": analytics.achievement_rate(all_rows, days=30),
-            "summary": analytics.rule_based_summary(all_rows, contexts),
+            "achievement": analytics.achievement_rate(all_rows, days=30, guideline_id=gid),
+            "summary": analytics.rule_based_summary(all_rows, contexts, guideline_id=gid),
         }
 
         return render_template("dashboard.html",
@@ -154,20 +149,21 @@ def register(app):
             ORDER BY measure_date, period, sequence, arm
         """)
         contexts = db.query("SELECT measure_date, temperature_c FROM daily_context WHERE temperature_c IS NOT NULL")
+        gid = g.guideline_id
 
         data = {
-            "morning_evening": analytics.morning_evening_compare(all_rows),
+            "morning_evening": analytics.morning_evening_compare(all_rows, guideline_id=gid),
             "left_right": analytics.left_right_diff(all_rows),
             "weekly_trend": analytics.weekly_regression(all_rows, weeks_back=24),
             "seasonal": analytics.seasonal_pattern(all_rows),
-            "distribution": analytics.classification_distribution(all_rows),
-            "achievement_30": analytics.achievement_rate(all_rows, days=30),
-            "achievement_90": analytics.achievement_rate(all_rows, days=90),
+            "distribution": analytics.classification_distribution(all_rows, guideline_id=gid),
+            "achievement_30": analytics.achievement_rate(all_rows, days=30, guideline_id=gid),
+            "achievement_90": analytics.achievement_rate(all_rows, days=90, guideline_id=gid),
             "cv_30": analytics.variability_coefficient(all_rows, days=30),
             "cv_90": analytics.variability_coefficient(all_rows, days=90),
             "boxplot": analytics.boxplot_by_combo(all_rows),
             "correlations": analytics.correlations(all_rows, contexts),
-            "summary": analytics.rule_based_summary(all_rows, contexts),
+            "summary": analytics.rule_based_summary(all_rows, contexts, guideline_id=gid),
             "n_total": len(all_rows),
         }
         return render_template("analytics.html", data=data)
@@ -180,18 +176,36 @@ def register(app):
             FROM bp_records WHERE systolic IS NOT NULL ORDER BY measure_date
         """)
         contexts = db.query("SELECT measure_date, temperature_c FROM daily_context WHERE temperature_c IS NOT NULL")
+        gid = g.guideline_id
         return jsonify({
-            "morning_evening": analytics.morning_evening_compare(all_rows),
+            "guideline": gid,
+            "morning_evening": analytics.morning_evening_compare(all_rows, guideline_id=gid),
             "left_right": analytics.left_right_diff(all_rows),
             "weekly_trend": analytics.weekly_regression(all_rows, weeks_back=24),
             "seasonal": analytics.seasonal_pattern(all_rows),
-            "distribution": analytics.classification_distribution(all_rows),
-            "achievement_30": analytics.achievement_rate(all_rows, days=30),
+            "distribution": analytics.classification_distribution(all_rows, guideline_id=gid),
+            "achievement_30": analytics.achievement_rate(all_rows, days=30, guideline_id=gid),
             "cv_30": analytics.variability_coefficient(all_rows, days=30),
             "boxplot": analytics.boxplot_by_combo(all_rows),
             "correlations": analytics.correlations(all_rows, contexts),
-            "summary": analytics.rule_based_summary(all_rows, contexts),
+            "summary": analytics.rule_based_summary(all_rows, contexts, guideline_id=gid),
         })
+
+    @app.route("/settings", methods=["GET", "POST"])
+    def settings_page():
+        if request.method == "POST":
+            new_gid = request.form.get("guideline", "").strip()
+            if new_gid not in {gid for gid, _ in guidelines.all_options()}:
+                abort(400, "未知的 guideline")
+            db.set_setting("bp_guideline", new_gid)
+            return redirect(url_for("settings_page", saved=1))
+        saved = request.args.get("saved") == "1"
+        return render_template("settings.html",
+                               current_id=g.guideline_id,
+                               current=g.guideline,
+                               options=guidelines.all_options(),
+                               all_guidelines_meta=guidelines.GUIDELINES,
+                               saved=saved)
 
     @app.route("/records")
     def records_list():

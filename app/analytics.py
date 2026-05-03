@@ -8,6 +8,8 @@
 from datetime import date, datetime, timedelta
 from math import sqrt
 
+from . import guidelines
+
 
 # ---------- 通用工具 ----------
 
@@ -79,32 +81,36 @@ def _pearson(xs, ys):
     return num / sqrt(den_x * den_y)
 
 
-def _classify(sys_v, dia_v):
-    """AHA/ACC 2017,任一達標即歸該級。回傳 key。"""
-    if sys_v is None or dia_v is None:
-        return "unknown"
-    if sys_v >= 180 or dia_v >= 120:
-        return "crisis"
-    if sys_v >= 140 or dia_v >= 90:
-        return "stage2"
-    if sys_v >= 130 or dia_v >= 80:
-        return "stage1"
-    if sys_v >= 120:
-        return "elevated"
-    return "normal"
+def _classify(sys_v, dia_v, guideline_id=None):
+    """依指定 guideline 判讀,任一達標即歸該級。回傳 level key。"""
+    return guidelines.classify(sys_v, dia_v, guideline_id or guidelines.DEFAULT_GUIDELINE)
+
+
+def _hypertensive_keys(guideline_id):
+    """Return the set of level keys that count as 'high BP' for that guideline."""
+    if guideline_id == "esc2018":
+        return {"grade1", "grade2", "grade3"}
+    return {"stage1", "stage2", "crisis"}  # AHA / TW
+
+
+def _achievement_thresholds(guideline_id):
+    """Return (sys_target, dia_target) used as 達標門檻 (mean of day < target)."""
+    g = guidelines.get(guideline_id) if guideline_id else guidelines.get(guidelines.DEFAULT_GUIDELINE)
+    return g["target_sys"], g["target_dia"]
 
 
 # ---------- 各項分析 ----------
 
-def morning_evening_compare(rows):
+def morning_evening_compare(rows, guideline_id=None):
     """晨/昏對比:平均、超標率、樣本數。"""
     am = [r for r in rows if r["period"] == "AM"]
     pm = [r for r in rows if r["period"] == "PM"]
+    high_keys = _hypertensive_keys(guideline_id)
 
     def stats(group):
         sys_xs = [r["systolic"] for r in group if r["systolic"] is not None]
         dia_xs = [r["diastolic"] for r in group if r["diastolic"] is not None]
-        n_high = sum(1 for r in group if _classify(r["systolic"], r["diastolic"]) in ("stage1", "stage2", "crisis"))
+        n_high = sum(1 for r in group if _classify(r["systolic"], r["diastolic"], guideline_id) in high_keys)
         return {
             "n": len(group),
             "sys_mean": _mean(sys_xs),
@@ -204,15 +210,17 @@ def seasonal_pattern(rows):
     return {"months": months, "months_with_data": has_data}
 
 
-def classification_distribution(rows):
-    """每筆讀數的血壓分級分布(全期 + 近 30 天)。"""
-    levels = ["normal", "elevated", "stage1", "stage2", "crisis"]
+def classification_distribution(rows, guideline_id=None):
+    """每筆讀數的血壓分級分布(全期 + 近 30 天),依指定 guideline 分級。"""
+    g = guidelines.get(guideline_id) if guideline_id else guidelines.get(guidelines.DEFAULT_GUIDELINE)
+    levels = [k for k, *_ in g["levels"]]
+    labels = {k: lab for k, lab, *_ in g["levels"]}
     cutoff = (date.today() - timedelta(days=30)).isoformat()
 
     def count(group):
         c = {k: 0 for k in levels}
         for r in group:
-            k = _classify(r["systolic"], r["diastolic"])
+            k = _classify(r["systolic"], r["diastolic"], guideline_id)
             if k in c:
                 c[k] += 1
         return c
@@ -223,6 +231,7 @@ def classification_distribution(rows):
 
     return {
         "levels": levels,
+        "labels": labels,
         "all": all_c,
         "all_total": sum(all_c.values()),
         "recent": recent_c,
@@ -230,8 +239,12 @@ def classification_distribution(rows):
     }
 
 
-def achievement_rate(rows, days=30):
-    """達標率:近 N 天當日平均落在 <130/80 的天數比例。"""
+def achievement_rate(rows, days=30, guideline_id=None):
+    """達標率:近 N 天當日平均落在 (target_sys, target_dia) 以下的天數比例。
+
+    target 跟著 guideline 走 (AHA/TW 130/80, ESC 140/90)。
+    """
+    target_sys, target_dia = _achievement_thresholds(guideline_id)
     cutoff = (date.today() - timedelta(days=days)).isoformat()
     by_date = {}
     for r in rows:
@@ -250,7 +263,7 @@ def achievement_rate(rows, days=30):
         if not v["sys"] or not v["dia"]:
             continue
         n_days += 1
-        if _mean(v["sys"]) < 130 and _mean(v["dia"]) < 80:
+        if _mean(v["sys"]) < target_sys and _mean(v["dia"]) < target_dia:
             n_ok += 1
 
     return {
@@ -258,6 +271,8 @@ def achievement_rate(rows, days=30):
         "days_in_target": n_ok,
         "rate": (n_ok / n_days) if n_days else None,
         "window_days": days,
+        "target_sys": target_sys,
+        "target_dia": target_dia,
     }
 
 
@@ -340,10 +355,11 @@ def correlations(rows, contexts):
 
 # ---------- 規則式自然語言摘要 ----------
 
-def rule_based_summary(rows, contexts=None):
+def rule_based_summary(rows, contexts=None, guideline_id=None):
     """根據規則產生中文摘要句子列表。每句獨立、可挑選顯示。"""
     contexts = contexts or []
     sentences = []
+    g = guidelines.get(guideline_id) if guideline_id else guidelines.get(guidelines.DEFAULT_GUIDELINE)
 
     if not rows:
         return ["目前資料庫無血壓紀錄,請先匯入或新增。"]
@@ -353,21 +369,19 @@ def rule_based_summary(rows, contexts=None):
     cutoff_30 = (date.today() - timedelta(days=30)).isoformat()
     recent_rows = [r for r in rows if str(r["measure_date"]) >= cutoff_30]
     n_recent = len(recent_rows)
-    sentences.append(f"資料庫共 {n_total} 筆讀數,近 30 天 {n_recent} 筆。")
+    sentences.append(f"資料庫共 {n_total} 筆讀數,近 30 天 {n_recent} 筆 (依 {g['short']} 指引判讀)。")
 
     # 2. 近 30 天平均 + 分級
     if recent_rows:
         sys_m = _mean([r["systolic"] for r in recent_rows])
         dia_m = _mean([r["diastolic"] for r in recent_rows])
         if sys_m and dia_m:
-            cls = _classify(sys_m, dia_m)
-            label = {"normal": "正常", "elevated": "血壓偏高",
-                     "stage1": "高血壓 1 級", "stage2": "高血壓 2 級",
-                     "crisis": "高血壓危象"}.get(cls, cls)
+            cls = _classify(sys_m, dia_m, guideline_id)
+            label = guidelines.level_label(cls, guideline_id or guidelines.DEFAULT_GUIDELINE)
             sentences.append(f"近 30 天平均 {sys_m:.0f}/{dia_m:.0f} mmHg → 分級「{label}」。")
 
     # 3. 晨/昏對比
-    me = morning_evening_compare(recent_rows or rows)
+    me = morning_evening_compare(recent_rows or rows, guideline_id=guideline_id)
     if me["diff_sys"] is not None:
         diff = me["diff_sys"]
         if diff > 5:
@@ -401,10 +415,10 @@ def rule_based_summary(rows, contexts=None):
             sentences.append(f"近 {wr['n_weeks']} 週收縮壓週均呈下降趨勢(每週 {slope:.2f} mmHg)。")
 
     # 6. 達標率
-    ar = achievement_rate(rows, days=30)
+    ar = achievement_rate(rows, days=30, guideline_id=guideline_id)
     if ar["rate"] is not None:
         sentences.append(
-            f"近 30 天達標率(當日平均 <130/80) {ar['rate']*100:.0f}% "
+            f"近 30 天達標率(當日平均 <{ar['target_sys']}/{ar['target_dia']}) {ar['rate']*100:.0f}% "
             f"({ar['days_in_target']}/{ar['days_with_data']} 天)。"
         )
 
