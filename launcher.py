@@ -1,9 +1,13 @@
 """PyInstaller launcher for bp-tracker.
 
-Behaves identically when run with `python launcher.py` and when run as a
-PyInstaller-frozen executable. In frozen mode the DB lives next to the .exe
-(so the user can see/back-up/move it), while bundled assets (templates,
-static files, schema.sql) come from sys._MEIPASS.
+Frozen / windowed mode:
+    - Flask runs in a background thread (waitress preferred, fallback to dev server)
+    - Main thread shows a system-tray icon (pystray): right-click → Open / Quit
+    - stdout/stderr redirected to bp-tracker.log next to the .exe (no console window)
+
+Dev / console mode:
+    - Same logic; if pystray is unavailable, falls back to a sleep loop
+      so you can Ctrl+C to stop.
 """
 
 import os
@@ -15,18 +19,28 @@ from pathlib import Path
 
 
 def _resolve_paths():
-    """Return (db_path, schema_path, project_root) for both frozen & dev modes."""
     if getattr(sys, "frozen", False):
-        bundle_dir = Path(sys._MEIPASS)  # PyInstaller temp extract dir
+        bundle_dir = Path(sys._MEIPASS)
         exe_dir = Path(sys.executable).parent
         db_path = exe_dir / "bp.db"
         schema_path = bundle_dir / "phase2_db" / "schema.sql"
-        project_root = bundle_dir
+        log_path = exe_dir / "bp-tracker.log"
     else:
-        project_root = Path(__file__).resolve().parent
-        db_path = project_root / "phase2_db" / "bp.db"
-        schema_path = project_root / "phase2_db" / "schema.sql"
-    return db_path, schema_path, project_root
+        proj_root = Path(__file__).resolve().parent
+        db_path = proj_root / "phase2_db" / "bp.db"
+        schema_path = proj_root / "phase2_db" / "schema.sql"
+        log_path = proj_root / "bp-tracker.log"
+    return db_path, schema_path, log_path
+
+
+def _redirect_stdio_if_windowed(log_path: Path):
+    """When --windowed/--noconsole, sys.stdout/stderr are None on Windows.
+    Redirect both to a log file so errors don't vanish silently."""
+    if sys.stdout is None or sys.stderr is None:
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        f = open(log_path, "a", encoding="utf-8", buffering=1)
+        sys.stdout = f
+        sys.stderr = f
 
 
 def _init_db_if_missing(db_path: Path, schema_path: Path):
@@ -44,17 +58,79 @@ def _init_db_if_missing(db_path: Path, schema_path: Path):
     return True
 
 
-def main():
-    db_path, schema_path, _ = _resolve_paths()
+def _make_tray_image():
+    """Generate a 64×64 red circle with a white medical cross (in-memory)."""
+    from PIL import Image, ImageDraw
+    img = Image.new("RGBA", (64, 64), (0, 0, 0, 0))
+    d = ImageDraw.Draw(img)
+    d.ellipse((4, 4, 60, 60), fill=(220, 38, 38, 255))      # red circle
+    d.rectangle((30, 18, 34, 46), fill=(255, 255, 255, 255))  # vertical bar
+    d.rectangle((18, 30, 46, 34), fill=(255, 255, 255, 255))  # horizontal bar
+    return img
 
-    # Tell app.db where the database is.
+
+def _start_flask(app, port):
+    """Run Flask in current thread (called from a daemon thread)."""
+    try:
+        from waitress import serve
+        serve(app, host="127.0.0.1", port=port, threads=4)
+    except ImportError:
+        app.run(host="127.0.0.1", port=port, debug=False, use_reloader=False)
+    except Exception as exc:
+        print(f"[ERROR] Flask server crashed: {exc}", file=sys.stderr)
+
+
+def _run_with_tray(url: str):
+    """Show a system-tray icon. Blocking until Quit."""
+    import pystray
+
+    def on_open(icon, item):
+        try:
+            webbrowser.open(url)
+        except Exception:
+            pass
+
+    def on_quit(icon, item):
+        icon.stop()
+        os._exit(0)
+
+    icon = pystray.Icon(
+        "bp-tracker",
+        _make_tray_image(),
+        "bp-tracker (running)",
+        menu=pystray.Menu(
+            pystray.MenuItem("開啟血壓系統", on_open, default=True),
+            pystray.MenuItem("離開", on_quit),
+        ),
+    )
+    icon.run()
+
+
+def _run_console_loop(url: str):
+    """Fallback when pystray is missing: keep server alive until Ctrl+C."""
+    print()
+    print("═══════════════════════════════════════════")
+    print(f"  血壓記錄系統  →  {url}")
+    print("  停止: 關閉本視窗 或 按 Ctrl+C")
+    print("═══════════════════════════════════════════")
+    print()
+    try:
+        while True:
+            time.sleep(3600)
+    except KeyboardInterrupt:
+        pass
+
+
+def main():
+    db_path, schema_path, log_path = _resolve_paths()
+    _redirect_stdio_if_windowed(log_path)
+
     os.environ["BP_DB_PATH"] = str(db_path)
 
-    created = _init_db_if_missing(db_path, schema_path)
-    if created:
-        print(f"[+] 已建立空資料庫 {db_path}")
+    if _init_db_if_missing(db_path, schema_path):
+        print(f"[+] Created empty DB at {db_path}")
     else:
-        print(f"[i] 使用現有資料庫 {db_path}")
+        print(f"[i] Using existing DB {db_path}")
 
     from app import create_app
     app = create_app()
@@ -62,29 +138,29 @@ def main():
     port = int(os.environ.get("PORT", "5050"))
     url = f"http://localhost:{port}"
 
-    def _open_browser():
-        time.sleep(1.5)
-        try:
-            webbrowser.open(url)
-        except Exception:
-            pass
+    # Server runs in background thread (daemon = dies with main thread)
+    server_thread = threading.Thread(
+        target=_start_flask, args=(app, port), daemon=True, name="flask-server"
+    )
+    server_thread.start()
 
+    # Auto-open browser once on startup
     if os.environ.get("BP_NO_BROWSER", "").lower() not in ("1", "true", "yes"):
-        threading.Thread(target=_open_browser, daemon=True).start()
+        threading.Thread(
+            target=lambda: (time.sleep(1.5), webbrowser.open(url)),
+            daemon=True, name="browser-opener",
+        ).start()
 
-    print()
-    print("═══════════════════════════════════════════")
-    print(f"  血壓記錄系統  →  {url}")
-    print("  停止: 關閉本視窗 或 按 Ctrl+C")
-    print("═══════════════════════════════════════════")
-    print()
-
-    # In frozen mode prefer waitress (production WSGI), fall back to Flask dev server.
+    # Main thread: tray icon (preferred) or console loop (fallback)
     try:
-        from waitress import serve
-        serve(app, host="127.0.0.1", port=port, threads=4)
+        _run_with_tray(url)
     except ImportError:
-        app.run(host="127.0.0.1", port=port, debug=False, use_reloader=False)
+        print("[i] pystray not available — running in console mode.")
+        _run_console_loop(url)
+    except Exception as exc:
+        # Tray init failed — likely no display. Fall back to console.
+        print(f"[!] Tray init failed ({exc}); falling back to console mode.")
+        _run_console_loop(url)
 
 
 if __name__ == "__main__":

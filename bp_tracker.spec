@@ -22,6 +22,11 @@ a = Analysis(
     ],
     hiddenimports=[
         'waitress',
+        'pystray',
+        'pystray._win32',
+        'PIL',
+        'PIL.Image',
+        'PIL.ImageDraw',
         'app',
         'app.routes',
         'app.db',
@@ -32,7 +37,7 @@ a = Analysis(
     hooksconfig={},
     runtime_hooks=[],
     excludes=[
-        'tkinter', 'matplotlib', 'numpy', 'pandas', 'scipy', 'PIL',
+        'tkinter', 'matplotlib', 'numpy', 'pandas', 'scipy',
         'PyQt5', 'PyQt6', 'PySide2', 'PySide6', 'IPython', 'jupyter',
     ],
     win_no_prefer_redirects=False,
@@ -57,7 +62,7 @@ exe = EXE(
     upx=False,           # UPX 容易被 Windows Defender 誤判,關掉
     upx_exclude=[],
     runtime_tmpdir=None,
-    console=True,        # 保留 console 視窗,讓使用者看到 URL 與停止指示
+    console=False,       # 隱藏 console 視窗;UI 改用 system tray icon (見 launcher.py)
     disable_windowed_traceback=False,
     argv_emulation=False,
     target_arch=None,

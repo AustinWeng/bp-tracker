@@ -38,7 +38,7 @@ echo [..] Installing packages ...
 if errorlevel 1 goto pip_fail
 ".venv\Scripts\pip.exe" install -q -r requirements.txt
 if errorlevel 1 goto pip_fail
-".venv\Scripts\pip.exe" install -q waitress pyinstaller
+".venv\Scripts\pip.exe" install -q waitress pyinstaller pystray pillow
 if errorlevel 1 goto pip_fail
 goto pip_ok
 
