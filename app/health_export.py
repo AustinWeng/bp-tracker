@@ -12,7 +12,7 @@ from datetime import datetime, timedelta
 from xml.sax.saxutils import escape
 
 SOURCE_NAME = "BP Tracker"
-SOURCE_VERSION = "1.1"
+SOURCE_VERSION = "1.2"
 TIMEZONE = "+0800"   # 台灣時區,如需跨時區再做進階處理
 
 
@@ -84,37 +84,56 @@ def build_xml(rows):
           systolic, diastolic, pulse, source (optional).
     """
     now = datetime.now().strftime("%Y-%m-%d %H:%M:%S ") + TIMEZONE
+    # DTD 對齊 Apple 健康 app 自己 export 出的 export.xml 格式 1:1
+    # 重點:ExportDate 與 Me 為 REQUIRED (沒有 `?`),Lionheart Health Data Importer
+    # 等第三方工具會嚴格檢查這兩個元素存在。
     parts = [
         '<?xml version="1.0" encoding="UTF-8"?>',
         '<!DOCTYPE HealthData [',
-        '<!ELEMENT HealthData (ExportDate?, Me?, Record*, Correlation*, Workout*)>',
+        '<!-- HealthKit Export Version: 12 -->',
+        '<!ELEMENT HealthData (ExportDate, Me, Record*, Correlation*, Workout*, ActivitySummary*, ClinicalRecord*, Audiogram*, VisionPrescription*)>',
+        '<!ATTLIST HealthData',
+        '  locale CDATA #REQUIRED>',
         '<!ELEMENT ExportDate EMPTY>',
         '<!ATTLIST ExportDate value CDATA #REQUIRED>',
-        '<!ELEMENT Record (MetadataEntry*)>',
+        '<!ELEMENT Me EMPTY>',
+        '<!ATTLIST Me',
+        '  HKCharacteristicTypeIdentifierDateOfBirth         CDATA #IMPLIED',
+        '  HKCharacteristicTypeIdentifierBiologicalSex       CDATA #IMPLIED',
+        '  HKCharacteristicTypeIdentifierBloodType           CDATA #IMPLIED',
+        '  HKCharacteristicTypeIdentifierFitzpatrickSkinType CDATA #IMPLIED',
+        '  HKCharacteristicTypeIdentifierCardioFitnessMedicationsUse CDATA #IMPLIED>',
+        '<!ELEMENT Record (MetadataEntry|HeartRateVariabilityMetadataList)*>',
         '<!ATTLIST Record',
-        '  type CDATA #REQUIRED',
-        '  sourceName CDATA #REQUIRED',
+        '  type          CDATA #REQUIRED',
+        '  unit          CDATA #IMPLIED',
+        '  value         CDATA #IMPLIED',
+        '  sourceName    CDATA #REQUIRED',
         '  sourceVersion CDATA #IMPLIED',
-        '  unit CDATA #IMPLIED',
-        '  creationDate CDATA #IMPLIED',
-        '  startDate CDATA #REQUIRED',
-        '  endDate CDATA #REQUIRED',
-        '  value CDATA #IMPLIED>',
-        '<!ELEMENT Correlation (MetadataEntry*, Record*)>',
+        '  device        CDATA #IMPLIED',
+        '  creationDate  CDATA #IMPLIED',
+        '  startDate     CDATA #REQUIRED',
+        '  endDate       CDATA #REQUIRED>',
+        '<!ELEMENT Correlation ((MetadataEntry|Record)*)>',
         '<!ATTLIST Correlation',
-        '  type CDATA #REQUIRED',
-        '  sourceName CDATA #REQUIRED',
+        '  type          CDATA #REQUIRED',
+        '  sourceName    CDATA #REQUIRED',
         '  sourceVersion CDATA #IMPLIED',
-        '  creationDate CDATA #IMPLIED',
-        '  startDate CDATA #REQUIRED',
-        '  endDate CDATA #REQUIRED>',
+        '  device        CDATA #IMPLIED',
+        '  creationDate  CDATA #IMPLIED',
+        '  startDate     CDATA #REQUIRED',
+        '  endDate       CDATA #REQUIRED>',
         '<!ELEMENT MetadataEntry EMPTY>',
         '<!ATTLIST MetadataEntry',
-        '  key CDATA #REQUIRED',
+        '  key   CDATA #REQUIRED',
         '  value CDATA #IMPLIED>',
         ']>',
         '<HealthData locale="zh_TW">',
-        f'  <ExportDate value="{now}"/>',
+        f' <ExportDate value="{now}"/>',
+        ' <Me HKCharacteristicTypeIdentifierBiologicalSex="HKBiologicalSexNotSet"'
+        ' HKCharacteristicTypeIdentifierBloodType="HKBloodTypeNotSet"'
+        ' HKCharacteristicTypeIdentifierFitzpatrickSkinType="HKFitzpatrickSkinTypeNotSet"'
+        ' HKCharacteristicTypeIdentifierCardioFitnessMedicationsUse="None"/>',
     ]
 
     for r in rows:
