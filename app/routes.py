@@ -366,7 +366,7 @@ def register(app):
     def export_health_xml():
         rows = db.query("""
             SELECT measure_date, period, measure_time, sequence, arm,
-                   systolic, diastolic, pulse
+                   systolic, diastolic, pulse, source
             FROM bp_records
             WHERE systolic IS NOT NULL OR pulse IS NOT NULL
             ORDER BY measure_date, period, sequence, arm

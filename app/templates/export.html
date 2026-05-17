@@ -4,26 +4,53 @@
 
 <h1 class="text-2xl font-bold mb-4">匯出到 Apple Health</h1>
 
-<div class="bg-white p-6 rounded-lg shadow-sm border border-slate-200 max-w-2xl">
-  <p class="mb-4">下載含所有血壓 + 心跳資料的 XML 檔,用 iPhone 上的 <strong>Health Import</strong> App (App Store 免費) 或自訂 Shortcut 匯入到「健康」。</p>
+<div class="bg-white p-6 rounded-lg shadow-sm border border-slate-200 max-w-3xl">
+  <p class="mb-4 text-sm text-slate-700">
+    下載 Apple Health 相容 XML(含所有血壓 + 心跳資料,自動 Correlation 包裝 / 時間錯開 / 含 metadata)。
+    iPhone 端用 <strong>Health Import</strong>(App Store 免費)匯入。
+  </p>
 
   <a href="{{ url_for('export_health_xml') }}" class="inline-block bg-blue-600 hover:bg-blue-700 text-white px-6 py-3 rounded font-medium">
     📥 下載 Apple Health XML
   </a>
 
-  <div class="mt-6 text-sm text-slate-600">
-    <h3 class="font-bold text-slate-900 mb-2">iPhone 匯入步驟</h3>
-    <ol class="list-decimal list-inside space-y-1">
-      <li>在 iPhone App Store 安裝「Health Import」(免費)</li>
-      <li>用 AirDrop / iCloud / Email 把下載的 XML 傳到 iPhone</li>
-      <li>iPhone 上點 XML 檔,選擇用 Health Import 開啟</li>
-      <li>App 會顯示要匯入的記錄數,點確認</li>
+  <!-- 同一台 iPhone (使用本機 Mac 帳戶) -->
+  <div class="mt-6 text-sm text-slate-700">
+    <h3 class="font-bold text-slate-900 mb-2">A. 匯入到「自己的 iPhone」</h3>
+    <ol class="list-decimal list-inside space-y-1 ml-2">
+      <li>iPhone App Store 安裝「<strong>Health Import</strong>」(免費)</li>
+      <li>把下載的 XML 用 AirDrop 傳到 iPhone</li>
+      <li>iPhone 上點檔案 → 用 Health Import 開啟 → 確認匯入</li>
       <li>打開「健康」App → 瀏覽 → 心臟 → 血壓,確認資料已進入</li>
     </ol>
   </div>
 
+  <!-- 跨帳戶,傳到家人 iPhone -->
+  <div class="mt-6 text-sm text-slate-700 bg-amber-50 border border-amber-200 rounded p-4">
+    <h3 class="font-bold text-amber-900 mb-2">B. 匯入到「家人的 iPhone」(不同 Apple ID)</h3>
+    <p class="text-xs text-amber-800 mb-2">XML 含敏感醫療資料,建議用 AirDrop 離線傳輸,不要走 LINE/Email/雲端。</p>
+    <ol class="list-decimal list-inside space-y-1 ml-2">
+      <li>家人 iPhone:設定 → 一般 → AirDrop → 暫時設為「<strong>所有人 10 分鐘</strong>」</li>
+      <li>家人 iPhone 上先裝好「<strong>Health Import</strong>」(App Store 免費)</li>
+      <li>你 Mac:Finder 找到 <code class="bg-slate-200 px-1 rounded">bp_export_YYYY-MM-DD.xml</code> → 右鍵「分享」→ AirDrop → 選家人裝置</li>
+      <li>家人 iPhone:收到通知 → 接受 → 預設用「檔案」App 接收</li>
+      <li>家人 iPhone:檔案 App 找到 XML → 長按 → 分享 → 用 Health Import 開啟 → 確認匯入</li>
+      <li>家人 iPhone:打開「健康」App → 瀏覽 → 心臟 → 血壓,確認資料已進入</li>
+      <li>記得回去把家人 AirDrop 改回「<strong>僅聯絡人</strong>」或「關閉」</li>
+    </ol>
+  </div>
+
+  <div class="mt-6 text-sm text-slate-600 border-t border-slate-200 pt-4">
+    <h3 class="font-bold text-slate-900 mb-2">⚙️ 本系統匯出格式特色</h3>
+    <ul class="list-disc list-inside space-y-1 ml-2 text-xs">
+      <li><strong>Correlation 包裝</strong>:收縮 + 舒張綁定為一筆完整血壓(120/80),不會被拆成兩個獨立量</li>
+      <li><strong>時間錯開</strong>:同 session 的 L1 / R1 / L2 / R2 自動錯開 1 分鐘(避免「同秒 4 筆」)</li>
+      <li><strong>Metadata 註記</strong>:每筆含 <code>bp_arm</code>(左右手)/ <code>bp_sequence</code>(第幾次)/ <code>bp_period</code>(AM/PM)/ <code>bp_source</code>(資料來源),點開可看註記</li>
+    </ul>
+  </div>
+
   <div class="mt-4 text-xs text-slate-500 border-t border-slate-200 pt-4">
-    <strong>注意:</strong>每次匯出包含所有資料。Apple Health 會去重複,但若你已匯入過,可能會看到重複項目,可在健康 App 中手動刪除。
+    <strong>注意:</strong>每次匯出包含所有歷史資料。Health Import 會比對時間戳去重複,但若你已匯入過部分資料,個別工具可能仍會顯示重複項目,可在健康 App 中手動刪除。
   </div>
 </div>
 
