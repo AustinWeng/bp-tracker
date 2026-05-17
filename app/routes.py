@@ -374,6 +374,7 @@ def register(app):
         days = request.args.get("days", type=int)
         from_d = request.args.get("from")
         to_d = request.args.get("to")
+        limit = request.args.get("limit", type=int)
 
         params = []
         where = "WHERE (systolic IS NOT NULL OR pulse IS NOT NULL)"
@@ -395,12 +396,18 @@ def register(app):
                 params.append(cutoff)
                 suffix = f"_last{days}d_{anchor}"
 
+        limit_clause = ""
+        if limit and limit > 0:
+            limit_clause = f" LIMIT {int(limit)}"
+            suffix = f"_min{int(limit)}" + suffix
+
         rows = db.query(f"""
             SELECT measure_date, period, measure_time, sequence, arm,
                    systolic, diastolic, pulse, source
             FROM bp_records
             {where}
-            ORDER BY measure_date, period, sequence, arm
+            ORDER BY measure_date DESC, period DESC, sequence DESC, arm DESC
+            {limit_clause}
         """, params)
         xml = health_export.build_xml(rows)
         return Response(

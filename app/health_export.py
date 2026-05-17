@@ -47,15 +47,29 @@ def _fmt_ts(dt):
 
 
 def _metadata_entries(arm, seq, period, source, indent="      "):
-    """Render <MetadataEntry> rows for a single reading."""
+    """Render <MetadataEntry> rows.
+
+    限制:HealthKit 對自訂 metadata key 嚴格 — 非 Apple 預定義或 reverse-DNS 格式
+    可能讓第三方 importer (e.g. Lionheart) 解析時 crash。
+    所以只保留標準 key `HKMetadataKeyWasUserEntered`,把左右手/次序等資訊
+    塞進 source 註記改用 reverse-DNS key,並提供開關。
+    """
     entries = [
         ("HKMetadataKeyWasUserEntered", "1"),
-        ("bp_arm", arm),
-        ("bp_arm_label", "左手" if arm == "L" else "右手"),
-        ("bp_sequence", str(int(seq)) if seq is not None else ""),
-        ("bp_period", period or ""),
-        ("bp_source", source or ""),
     ]
+    # 將 arm/seq/period/source 合併到一個 reverse-DNS key 中 (safe for importers)
+    tags = []
+    if arm:
+        tags.append(f"arm={arm}")
+    if seq is not None:
+        tags.append(f"seq={int(seq)}")
+    if period:
+        tags.append(f"period={period}")
+    if source:
+        tags.append(f"src={source}")
+    if tags:
+        entries.append(("com.bp_tracker.note", " ".join(tags)))
+
     out = []
     for k, v in entries:
         if v == "" or v is None:
@@ -92,8 +106,7 @@ def build_xml(rows):
         f'  <ExportDate value="{today}" />',
         '  <Me HKCharacteristicTypeIdentifierBiologicalSex="HKBiologicalSexNotSet"'
         ' HKCharacteristicTypeIdentifierBloodType="HKBloodTypeNotSet"'
-        ' HKCharacteristicTypeIdentifierFitzpatrickSkinType="HKFitzpatrickSkinTypeNotSet"'
-        ' HKCharacteristicTypeIdentifierCardioFitnessMedicationsUse="None" />',
+        ' HKCharacteristicTypeIdentifierFitzpatrickSkinType="HKFitzpatrickSkinTypeNotSet" />',
     ]
 
     for r in rows:
