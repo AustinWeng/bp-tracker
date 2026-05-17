@@ -10,9 +10,30 @@
     iPhone 端用 <strong>Health Import</strong>(App Store 免費)匯入。
   </p>
 
-  <a href="{{ url_for('export_health_xml') }}" class="inline-block bg-blue-600 hover:bg-blue-700 text-white px-6 py-3 rounded font-medium">
-    📥 下載 Apple Health XML
-  </a>
+  <!-- 範圍選擇 -->
+  <div class="bg-slate-50 border border-slate-200 rounded p-4 mb-4">
+    <div class="text-sm font-medium text-slate-700 mb-2">📦 匯出範圍</div>
+    <div class="flex flex-wrap gap-2">
+      <a href="{{ url_for('export_health_xml', days=7) }}" class="px-3 py-2 bg-amber-100 hover:bg-amber-200 text-amber-900 border border-amber-300 rounded text-sm font-medium">
+        🧪 試水溫:最近 7 天
+      </a>
+      <a href="{{ url_for('export_health_xml', days=30) }}" class="px-3 py-2 bg-white hover:bg-slate-100 border border-slate-300 rounded text-sm">
+        最近 30 天
+      </a>
+      <a href="{{ url_for('export_health_xml', days=90) }}" class="px-3 py-2 bg-white hover:bg-slate-100 border border-slate-300 rounded text-sm">
+        最近 90 天
+      </a>
+      <a href="{{ url_for('export_health_xml') }}" class="px-3 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded text-sm font-medium">
+        📥 全部資料
+      </a>
+    </div>
+    <p class="text-xs text-slate-500 mt-2">
+      範圍從「最新資料日期」倒推 N 天(非從今天倒推,避免資料未更新時撈到空集合)。
+      建議先用「<strong>試水溫:最近 7 天</strong>」在自己 iPhone 試一次,確認 sys/dia 配對、
+      時間軸、metadata 都正確顯示後,再把「<strong>全部資料</strong>」傳給家人。
+      試完可在健康 App 中刪掉這 7 天。
+    </p>
+  </div>
 
   <!-- 同一台 iPhone (使用本機 Mac 帳戶) -->
   <div class="mt-6 text-sm text-slate-700">

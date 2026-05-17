@@ -364,20 +364,51 @@ def register(app):
 
     @app.route("/export/health.xml")
     def export_health_xml():
-        rows = db.query("""
+        """匯出 Apple Health XML。
+
+        可選參數:
+          ?days=N           只匯出最近 N 天 (用於試水溫前先試小量)
+          ?from=YYYY-MM-DD&to=YYYY-MM-DD  匯出自訂日期範圍
+          (兩者都沒給 → 匯出全部)
+        """
+        days = request.args.get("days", type=int)
+        from_d = request.args.get("from")
+        to_d = request.args.get("to")
+
+        params = []
+        where = "WHERE (systolic IS NOT NULL OR pulse IS NOT NULL)"
+        suffix = ""
+        if from_d and to_d:
+            where += " AND measure_date BETWEEN ? AND ?"
+            params.extend([from_d, to_d])
+            suffix = f"_{from_d}_to_{to_d}"
+        elif days and days > 0:
+            # 從「最新資料日期」倒推 N 天,而不是從今天 (避免資料未更新到今日時撈到空集合)
+            latest = db.query(
+                "SELECT MAX(measure_date) AS d FROM bp_records WHERE systolic IS NOT NULL OR pulse IS NOT NULL"
+            )
+            anchor = latest[0]["d"] if latest and latest[0]["d"] else None
+            if anchor:
+                from datetime import timedelta as _td
+                cutoff = (date.fromisoformat(anchor) - _td(days=days - 1)).isoformat()
+                where += " AND measure_date >= ?"
+                params.append(cutoff)
+                suffix = f"_last{days}d_{anchor}"
+
+        rows = db.query(f"""
             SELECT measure_date, period, measure_time, sequence, arm,
                    systolic, diastolic, pulse, source
             FROM bp_records
-            WHERE systolic IS NOT NULL OR pulse IS NOT NULL
+            {where}
             ORDER BY measure_date, period, sequence, arm
-        """)
+        """, params)
         xml = health_export.build_xml(rows)
         return Response(
             xml,
             mimetype="application/xml",
             headers={
                 "Content-Disposition":
-                    f'attachment; filename="bp_export_{date.today().isoformat()}.xml"'
+                    f'attachment; filename="bp_export_{date.today().isoformat()}{suffix}.xml"'
             },
         )
 
