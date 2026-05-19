@@ -199,14 +199,14 @@ def main():
     .text-sm { font-size: 0.8rem !important; }
     .text-xs { font-size: 0.7rem !important; }
 
-    /* 圖表高度縮小 */
-    [style*="height: 380px"] { height: 240px !important; }
-    [style*="height: 320px"] { height: 220px !important; }
-    [style*="height: 280px"] { height: 200px !important; }
-    [style*="height: 260px"] { height: 180px !important; }
-    [style*="height: 240px"] { height: 180px !important; }
-    [style*="height: 220px"] { height: 160px !important; }
-    [style*="height: 130px"] { height: 110px !important; }
+    /* 圖表高度 — 縱軸拉長,Y 軸資訊更明顯 */
+    [style*="height: 380px"] { height: 360px !important; }
+    [style*="height: 320px"] { height: 300px !important; }
+    [style*="height: 280px"] { height: 260px !important; }
+    [style*="height: 260px"] { height: 240px !important; }
+    [style*="height: 240px"] { height: 220px !important; }
+    [style*="height: 220px"] { height: 200px !important; }
+    [style*="height: 130px"] { height: 130px !important; }
 
     /* Canvas 永遠不超寬 */
     canvas { max-width: 100% !important; }
@@ -297,6 +297,21 @@ def main():
     if (typeof Chart === 'undefined') return setTimeout(__applyChartDefaults, 30);
     // chartjs-plugin-zoom UMD 載入後會自動 register,我們只設 defaults
     Chart.defaults.plugins = Chart.defaults.plugins || {};
+
+    // Mobile: 縮小 chart 字型 (X/Y axis ticks, legend, tooltip)
+    const isMobile = window.matchMedia('(max-width: 767px)').matches;
+    if (isMobile) {
+      Chart.defaults.font.size = 9;
+      // legend 與 tooltip 字略大,易讀
+      Chart.defaults.plugins.legend = Chart.defaults.plugins.legend || {};
+      Chart.defaults.plugins.legend.labels = Chart.defaults.plugins.legend.labels || {};
+      Chart.defaults.plugins.legend.labels.boxWidth = 10;
+      Chart.defaults.plugins.legend.labels.font = { size: 10 };
+      Chart.defaults.plugins.tooltip = Chart.defaults.plugins.tooltip || {};
+      Chart.defaults.plugins.tooltip.titleFont = { size: 11 };
+      Chart.defaults.plugins.tooltip.bodyFont = { size: 11 };
+    }
+
     Chart.defaults.plugins.zoom = {
       pan: {
         enabled: true,

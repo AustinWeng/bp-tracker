@@ -86,14 +86,14 @@
     .text-sm { font-size: 0.8rem !important; }
     .text-xs { font-size: 0.7rem !important; }
 
-    /* 圖表高度縮小 */
-    [style*="height: 380px"] { height: 240px !important; }
-    [style*="height: 320px"] { height: 220px !important; }
-    [style*="height: 280px"] { height: 200px !important; }
-    [style*="height: 260px"] { height: 180px !important; }
-    [style*="height: 240px"] { height: 180px !important; }
-    [style*="height: 220px"] { height: 160px !important; }
-    [style*="height: 130px"] { height: 110px !important; }
+    /* 圖表高度 — 縱軸拉長,Y 軸資訊更明顯 */
+    [style*="height: 380px"] { height: 360px !important; }
+    [style*="height: 320px"] { height: 300px !important; }
+    [style*="height: 280px"] { height: 260px !important; }
+    [style*="height: 260px"] { height: 240px !important; }
+    [style*="height: 240px"] { height: 220px !important; }
+    [style*="height: 220px"] { height: 200px !important; }
+    [style*="height: 130px"] { height: 130px !important; }
 
     /* Canvas 永遠不超寬 */
     canvas { max-width: 100% !important; }
@@ -184,6 +184,21 @@
     if (typeof Chart === 'undefined') return setTimeout(__applyChartDefaults, 30);
     // chartjs-plugin-zoom UMD 載入後會自動 register,我們只設 defaults
     Chart.defaults.plugins = Chart.defaults.plugins || {};
+
+    // Mobile: 縮小 chart 字型 (X/Y axis ticks, legend, tooltip)
+    const isMobile = window.matchMedia('(max-width: 767px)').matches;
+    if (isMobile) {
+      Chart.defaults.font.size = 9;
+      // legend 與 tooltip 字略大,易讀
+      Chart.defaults.plugins.legend = Chart.defaults.plugins.legend || {};
+      Chart.defaults.plugins.legend.labels = Chart.defaults.plugins.legend.labels || {};
+      Chart.defaults.plugins.legend.labels.boxWidth = 10;
+      Chart.defaults.plugins.legend.labels.font = { size: 10 };
+      Chart.defaults.plugins.tooltip = Chart.defaults.plugins.tooltip || {};
+      Chart.defaults.plugins.tooltip.titleFont = { size: 11 };
+      Chart.defaults.plugins.tooltip.bodyFont = { size: 11 };
+    }
+
     Chart.defaults.plugins.zoom = {
       pan: {
         enabled: true,
@@ -254,7 +269,7 @@
     <a href="#dashboard" class="px-2 py-1 rounded bg-blue-50 text-blue-700">儀表板</a>
     <a href="#analytics" class="px-2 py-1 rounded hover:bg-blue-50">分析</a>
     <a href="#records" class="px-2 py-1 rounded hover:bg-blue-50">紀錄</a>
-    <div class="ml-auto text-[10px] text-slate-400 hidden sm:block">2026-05-19 19:32</div>
+    <div class="ml-auto text-[10px] text-slate-400 hidden sm:block">2026-05-19 19:45</div>
   </div>
 </nav>
 
@@ -384,22 +399,22 @@
     <div class="flex items-center gap-2">
       <span class="text-slate-500 text-xs">時段:</span>
       <button class="filter-chip filter-period active" data-val="AM">上午</button>
-      <button class="filter-chip filter-period active" data-val="PM">下午</button>
+      <button class="filter-chip filter-period" data-val="PM">下午</button>
     </div>
     <div class="flex items-center gap-2">
       <span class="text-slate-500 text-xs">手:</span>
       <button class="filter-chip filter-arm active" data-val="L">左手</button>
-      <button class="filter-chip filter-arm active" data-val="R">右手</button>
+      <button class="filter-chip filter-arm" data-val="R">右手</button>
     </div>
     <div class="flex items-center gap-2">
       <span class="text-slate-500 text-xs">次序:</span>
       <button class="filter-chip filter-seq active" data-val="1">第 1 次</button>
-      <button class="filter-chip filter-seq active" data-val="2">第 2 次</button>
+      <button class="filter-chip filter-seq" data-val="2">第 2 次</button>
     </div>
     <div class="flex items-center gap-2">
       <span class="text-slate-500 text-xs">指標:</span>
       <button class="filter-chip filter-metric active" data-val="sys">收縮壓</button>
-      <button class="filter-chip filter-metric" data-val="dia">舒張壓</button>
+      <button class="filter-chip filter-metric active" data-val="dia">舒張壓</button>
     </div>
     <div class="flex items-center gap-2 ml-auto">
       <label class="flex items-center gap-1.5 cursor-pointer">
@@ -24973,7 +24988,7 @@ if (focused) {
 </main>
 
 <div class="text-center text-xs text-slate-400 py-4 border-t border-slate-200">
-  bp-tracker · 離線單檔版 (mobile.html) · 產生於 2026-05-19 19:32
+  bp-tracker · 離線單檔版 (mobile.html) · 產生於 2026-05-19 19:45
 </div>
 
 </body>
