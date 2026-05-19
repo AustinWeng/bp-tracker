@@ -275,6 +275,17 @@
     // chartjs-plugin-zoom UMD 載入後會自動 register,我們只設 defaults
     Chart.defaults.plugins = Chart.defaults.plugins || {};
 
+    // 全域禁用 Chart animation — 避免 filter chip 切換時 chart 先 animate
+    // 完整 187 個 PM data (從 2025-09 起) 再 jump 到 30 天的「殘影」現象
+    Chart.defaults.animation = false;
+    Chart.defaults.animations = { colors: false, x: false, y: false };
+    Chart.defaults.transitions = {
+      active: { animation: { duration: 0 } },
+      resize: { animation: { duration: 0 } },
+      show: { animation: { duration: 0 } },
+      hide: { animation: { duration: 0 } },
+    };
+
     // Mobile: 縮小 chart 字型 (X/Y axis ticks, legend, tooltip)
     const isMobile = window.matchMedia('(max-width: 767px)').matches;
     if (isMobile) {
@@ -572,17 +583,43 @@
     });
   }
 
-  // 監聽所有 filter chip 點擊 (dashboard.html 內的時段/手/次序/指標 chips),
-  // 切換後 chart 被 dashboard.html 的 applyFiltersAndDraw 重建,
-  // 等 100ms 讓 new chart fully rendered 再 reset brushes
-  function __registerFilterChipListeners() {
-    document.querySelectorAll('.filter-chip').forEach(btn => {
-      btn.addEventListener('click', () => {
-        setTimeout(__resetAllBrushes, 120);
-      });
-    });
+  // Monkey-patch dashboard.html 的 applyFiltersAndDraw 消除「殘影」。
+  // Bug:dashboard 的 `new Chart()` 即使 animation: false 仍 sync paint frame 1
+  // 顯示完整資料 (例如 187 個 PM 從 2025-09 起),~10ms 後我們 reset brush 才
+  // paint frame 2 (24 個從 04-02);這 ~10ms 內 browser 已 commit frame 1 → 殘影。
+  // Fix:filter chip click 期間,把 chart canvas 暫時 visibility:hidden,
+  //      跑完 orig + __resetAllBrushes 後再 rAF 後 show,使用者看不到 frame 1。
+  function __hookFilterRedraw() {
+    if (typeof window.applyFiltersAndDraw !== 'function') {
+      return setTimeout(__hookFilterRedraw, 100);
+    }
+    if (window.applyFiltersAndDraw.__bpHooked) return;
+    const orig = window.applyFiltersAndDraw;
+    const wrapped = function () {
+      // Hide chart canvases 避免 user 看到 new Chart 第一次 paint 的完整資料
+      const hiddenCanvases = __BRUSH_CHARTS
+        .map(id => document.getElementById(id))
+        .filter(c => c);
+      hiddenCanvases.forEach(c => c.style.visibility = 'hidden');
+      try {
+        const r = orig.apply(this, arguments);
+        // 立刻同步 reset brush → trigger applyRange → chart 變 sliced data
+        __resetAllBrushes();
+        // 在下一個 frame 把 canvas show 回來,user 看到的是 sliced 後的 frame
+        requestAnimationFrame(() => {
+          hiddenCanvases.forEach(c => c.style.visibility = '');
+        });
+        return r;
+      } catch (e) {
+        // 異常時保證 canvas show 回來
+        hiddenCanvases.forEach(c => c.style.visibility = '');
+        throw e;
+      }
+    };
+    wrapped.__bpHooked = true;
+    window.applyFiltersAndDraw = wrapped;
   }
-  setTimeout(__registerFilterChipListeners, 1500);
+  setTimeout(__hookFilterRedraw, 800);
 
   setTimeout(__injectAllBrushes, 600);
 
@@ -627,7 +664,7 @@
     <a href="#dashboard" class="px-2 py-1 rounded bg-blue-50 text-blue-700">儀表板</a>
     <a href="#analytics" class="px-2 py-1 rounded hover:bg-blue-50">分析</a>
     <a href="#records" class="px-2 py-1 rounded hover:bg-blue-50">紀錄</a>
-    <div class="ml-auto text-[10px] text-slate-400 hidden sm:block">2026-05-19 23:25</div>
+    <div class="ml-auto text-[10px] text-slate-400 hidden sm:block">2026-05-19 23:32</div>
   </div>
 </nav>
 
@@ -25358,7 +25395,7 @@ if (focused) {
 </main>
 
 <div class="text-center text-xs text-slate-400 py-4 border-t border-slate-200">
-  bp-tracker · 離線單檔版 (mobile.html) · 產生於 2026-05-19 23:25
+  bp-tracker · 離線單檔版 (mobile.html) · 產生於 2026-05-19 23:32
 </div>
 
 </body>
