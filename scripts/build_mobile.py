@@ -430,8 +430,15 @@ def main():
       const brushEl = document.getElementById(canvas.id + '-brush');
       const chart = Chart.getChart(canvas);
       if (brushEl && brushEl.noUiSlider && chart) {
-        const total = chart.data.labels.length;
-        brushEl.noUiSlider.set([0, total - 1]); // 觸發聯動 → 其他 brush 也 reset
+        // 用 __bpOriginal.labels (full) 算 total,而非 sliced 的 chart.data.labels
+        // 否則 brush 只會 reset 到目前 slice 的長度,而非 full range
+        const labels = (chart.__bpOriginal && chart.__bpOriginal.labels)
+                       ? chart.__bpOriginal.labels
+                       : chart.data.labels;
+        const total = labels.length;
+        if (total >= 2) {
+          brushEl.noUiSlider.set([0, total - 1]); // 觸發聯動 → 其他 brush 也 reset
+        }
       }
     });
   }
@@ -665,43 +672,135 @@ def main():
     if (!allDone) setTimeout(__injectAllBrushes, 300);
   }
 
-  // Filter chip 切換後 chart 被 destroy + new Chart, 用此 reset 所有 brush
-  function __resetAllBrushes() {
-    __BRUSH_CHARTS.forEach(canvasId => {
-      const brushEl = document.getElementById(canvasId + '-brush');
-      const canvas = document.getElementById(canvasId);
-      if (!brushEl || !brushEl.noUiSlider || !canvas) return;
-      const chart = Chart.getChart(canvas);
-      if (!chart || !chart.data.labels || chart.data.labels.length < 2) return;
-      // 清掉舊 instance 殘留 cache (new chart 不會有,但保險)
-      delete chart.__bpOriginal;
-      const total = chart.data.labels.length;
-      const initStart = __dateIndexCutoff(chart.data.labels, 30);
-      brushEl.noUiSlider.updateOptions({
-        start: [initStart, total - 1],
-        range: { min: 0, max: total - 1 },
-        tooltips: [
-          { to: i => {
-            const c = Chart.getChart(document.getElementById(canvasId));
-            const ls = c && c.__bpOriginal ? c.__bpOriginal.labels : (c?.data.labels || []);
-            return (ls[Math.round(i)] || '').slice(5);
-          }, from: Number },
-          { to: i => {
-            const c = Chart.getChart(document.getElementById(canvasId));
-            const ls = c && c.__bpOriginal ? c.__bpOriginal.labels : (c?.data.labels || []);
-            return (ls[Math.round(i)] || '').slice(5);
-          }, from: Number },
-        ],
-      }, true); // fire set event → trigger applyRange
-    });
+  // 找出與 targetDate 最接近的 label 的 index (用日期距離比對,容忍 AM/PM
+  // 兩組資料的稀疏日期不完全重疊)
+  function __findClosestDateIndex(labels, targetDate) {
+    if (!labels || !labels.length || !targetDate) return -1;
+    const targetTs = new Date(targetDate).getTime();
+    if (isNaN(targetTs)) return -1;
+    let bestIdx = -1;
+    let bestDiff = Infinity;
+    for (let i = 0; i < labels.length; i++) {
+      const ts = new Date(labels[i]).getTime();
+      if (isNaN(ts)) continue;
+      const diff = Math.abs(ts - targetTs);
+      if (diff < bestDiff) {
+        bestDiff = diff;
+        bestIdx = i;
+      }
+    }
+    return bestIdx;
   }
 
-  // Monkey-patch dashboard.html 的 applyFiltersAndDraw 消除「殘影」。
-  // Bug:dashboard 的 `new Chart()` 即使 animation: false 仍 sync paint frame 1
-  // 顯示完整資料 (例如 187 個 PM 從 2025-09 起),~10ms 後我們 reset brush 才
-  // paint frame 2 (24 個從 04-02);這 ~10ms 內 browser 已 commit frame 1 → 殘影。
-  // Fix:filter chip click 期間,把 chart canvas 暫時 visibility:hidden,
-  //      跑完 orig + __resetAllBrushes 後再 rAF 後 show,使用者看不到 frame 1。
+  // 判斷 slicedLabels 是否為 originalLabels 的連續 sub-array (prefix-match slice)。
+  // 用來偵測「chart 未被重建,只是 brush 切過 data」vs「chart 被重建/換資料」。
+  function __isSliceOf(slicedLabels, originalLabels) {
+    if (!slicedLabels || !originalLabels) return false;
+    if (slicedLabels.length > originalLabels.length) return false;
+    if (slicedLabels.length === 0) return true;
+    const startIdx = originalLabels.indexOf(slicedLabels[0]);
+    if (startIdx < 0) return false;
+    for (let i = 0; i < slicedLabels.length; i++) {
+      if (originalLabels[startIdx + i] !== slicedLabels[i]) return false;
+    }
+    return true;
+  }
+
+  // Filter chip 切換後 chart 被 destroy + new Chart, 用此 reset 所有 brush。
+  // savedRanges (optional): { canvasId → { fromLabel, toLabel, fromFrac, toFrac, wasFull } }
+  //   有提供 → 保留使用者選的日期範圍 (在新資料中找對應 index)
+  //   無提供 → 用預設「最近 30 天」
+  function __resetAllBrushes(savedRanges) {
+    __activeBrushSync = true; // 避免 updateOptions 觸發 propagation 連環跑
+    try {
+      __BRUSH_CHARTS.forEach(canvasId => {
+        const brushEl = document.getElementById(canvasId + '-brush');
+        const canvas = document.getElementById(canvasId);
+        if (!brushEl || !brushEl.noUiSlider || !canvas) return;
+        const chart = Chart.getChart(canvas);
+        if (!chart || !chart.data.labels || chart.data.labels.length < 2) return;
+
+        // 兩種情境:
+        // (a) chart 被重建 (dashboard 4 圖 destroy + new Chart):
+        //     chart.__bpOriginal undefined,chart.data.labels = full 新資料
+        //     → effectiveLabels = chart.data.labels
+        // (b) chart 未動 (weeklyChart 在 analytics,不被 dashboard filter 重建):
+        //     chart.__bpOriginal 仍有 full 舊 labels,chart.data.labels 是 brush 切過的 slice
+        //     → effectiveLabels = chart.__bpOriginal.labels (避免把 sliced 當 full)
+        let effectiveLabels;
+        if (chart.__bpOriginal && chart.__bpOriginal.labels
+            && __isSliceOf(chart.data.labels, chart.__bpOriginal.labels)) {
+          effectiveLabels = chart.__bpOriginal.labels;
+        } else {
+          if (chart.__bpOriginal) delete chart.__bpOriginal;
+          effectiveLabels = chart.data.labels;
+        }
+        const total = effectiveLabels.length;
+
+        let s, e;
+        const saved = savedRanges && savedRanges[canvasId];
+        if (saved && saved.wasFull) {
+          // 之前是「全部」→ 對齊到新資料的「全部」
+          s = 0;
+          e = total - 1;
+        } else if (saved) {
+          // 先試精確日期匹配
+          s = effectiveLabels.indexOf(saved.fromLabel);
+          e = effectiveLabels.indexOf(saved.toLabel);
+          // 找不到精確匹配 → 用最接近的日期 (AM/PM 資料日期不完全重疊時)
+          if (s < 0) s = __findClosestDateIndex(effectiveLabels, saved.fromLabel);
+          if (e < 0) e = __findClosestDateIndex(effectiveLabels, saved.toLabel);
+          // 完全找不到 → 用 fraction (覆蓋率) fallback
+          if (s < 0 || e < 0 || s > e) {
+            s = Math.round((saved.fromFrac || 0) * (total - 1));
+            e = Math.round((saved.toFrac || 1) * (total - 1));
+          }
+        } else {
+          // 沒有 saved (首次 reset 或無 brush state) → 預設最近 30 天
+          s = __dateIndexCutoff(effectiveLabels, 30);
+          e = total - 1;
+        }
+
+        // Clamp
+        if (s < 0) s = 0;
+        if (e > total - 1) e = total - 1;
+        if (s >= e) { e = total - 1; s = Math.max(0, e - 1); }
+
+        brushEl.noUiSlider.updateOptions({
+          start: [s, e],
+          range: { min: 0, max: total - 1 },
+          tooltips: [
+            { to: i => {
+              const c = Chart.getChart(document.getElementById(canvasId));
+              const ls = c && c.__bpOriginal ? c.__bpOriginal.labels : (c?.data.labels || []);
+              return (ls[Math.round(i)] || '').slice(5);
+            }, from: Number },
+            { to: i => {
+              const c = Chart.getChart(document.getElementById(canvasId));
+              const ls = c && c.__bpOriginal ? c.__bpOriginal.labels : (c?.data.labels || []);
+              return (ls[Math.round(i)] || '').slice(5);
+            }, from: Number },
+          ],
+        }, true); // fire set event → trigger applyRange (但 __activeBrushSync=true 阻擋 propagation)
+      });
+    } finally {
+      __activeBrushSync = false;
+    }
+  }
+
+  // Monkey-patch dashboard.html 的 applyFiltersAndDraw 達成兩件事:
+  //   (1) 消除「殘影」(chart frame 1 短暫秀完整資料):
+  //       Bug:dashboard 的 `new Chart()` 即使 animation: false 仍 sync paint
+  //       frame 1 顯示完整資料 (例如 187 個 PM 從 2025-09 起),~10ms 後我們
+  //       reset brush 才 paint frame 2 (24 個從 04-02);這 ~10ms 內 browser
+  //       已 commit frame 1 → 殘影。
+  //       Fix:filter chip click 期間,把 chart canvas 暫時 visibility:hidden,
+  //            跑完 orig + restore 後再 rAF 後 show,使用者看不到 frame 1。
+  //   (2) 保留使用者拖出來的日期範圍:
+  //       Bug:之前 __resetAllBrushes 固定 reset 到「最近 30 天」,
+  //            user 拖 brush 後切 AM/PM 又跳回 30 天。
+  //       Fix:在 orig.apply 之前先 snapshot 每個 brush 的 (fromLabel, toLabel)
+  //            與 wasFull;rebuild 完用 __resetAllBrushes(savedRanges) 還原。
   function __hookFilterRedraw() {
     if (typeof window.applyFiltersAndDraw !== 'function') {
       return setTimeout(__hookFilterRedraw, 100);
@@ -709,22 +808,46 @@ def main():
     if (window.applyFiltersAndDraw.__bpHooked) return;
     const orig = window.applyFiltersAndDraw;
     const wrapped = function () {
-      // Hide chart canvases 避免 user 看到 new Chart 第一次 paint 的完整資料
+      // (1) 在 chart 被 destroy 前,捕捉每個 brush 的日期範圍
+      const savedRanges = {};
+      __BRUSH_CHARTS.forEach(canvasId => {
+        const brushEl = document.getElementById(canvasId + '-brush');
+        const canvas = document.getElementById(canvasId);
+        if (!brushEl || !brushEl.noUiSlider || !canvas) return;
+        const chart = Chart.getChart(canvas);
+        if (!chart) return;
+        // 用 __bpOriginal 的 full labels (不用 sliced 的 chart.data.labels)
+        const labels = (chart.__bpOriginal && chart.__bpOriginal.labels)
+                       ? chart.__bpOriginal.labels
+                       : chart.data.labels;
+        if (!labels || labels.length < 2) return;
+        const v = brushEl.noUiSlider.get(true);
+        const s = Math.round(v[0]);
+        const e = Math.round(v[1]);
+        savedRanges[canvasId] = {
+          fromLabel: labels[s],
+          toLabel: labels[e],
+          fromFrac: s / Math.max(1, labels.length - 1),
+          toFrac: e / Math.max(1, labels.length - 1),
+          wasFull: s === 0 && e === labels.length - 1,
+        };
+      });
+
+      // (2) 隱藏 canvas 避免看到 new Chart 第一次 paint 的完整資料
       const hiddenCanvases = __BRUSH_CHARTS
         .map(id => document.getElementById(id))
         .filter(c => c);
       hiddenCanvases.forEach(c => c.style.visibility = 'hidden');
       try {
         const r = orig.apply(this, arguments);
-        // 立刻同步 reset brush → trigger applyRange → chart 變 sliced data
-        __resetAllBrushes();
-        // 在下一個 frame 把 canvas show 回來,user 看到的是 sliced 後的 frame
+        // (3) 還原 brush 到使用者選的日期範圍 (而非預設 30 天)
+        __resetAllBrushes(savedRanges);
+        // (4) 在下一個 frame 把 canvas show 回來
         requestAnimationFrame(() => {
           hiddenCanvases.forEach(c => c.style.visibility = '');
         });
         return r;
       } catch (e) {
-        // 異常時保證 canvas show 回來
         hiddenCanvases.forEach(c => c.style.visibility = '');
         throw e;
       }
