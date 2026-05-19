@@ -310,22 +310,22 @@
         drag: { enabled: false },
       },
     };
-    // 雙擊 chart → 4 個 brush 全部 reset 到完整範圍 (透過聯動自動同步)
+    // 雙擊 chart → 5 個 brush 全部 reset 到完整範圍
+    // 注意:noUiSlider .set() 不會 fire 'change' event,所以不能依賴
+    // propagateToOthers — 用 __setAllBrushesToRange 手動聯動所有 brush
     document.addEventListener('dblclick', (e) => {
       const canvas = e.target.closest && e.target.closest('canvas');
       if (!canvas) return;
-      const brushEl = document.getElementById(canvas.id + '-brush');
       const chart = Chart.getChart(canvas);
-      if (brushEl && brushEl.noUiSlider && chart) {
-        // 用 __bpOriginal.labels (full) 算 total,而非 sliced 的 chart.data.labels
-        // 否則 brush 只會 reset 到目前 slice 的長度,而非 full range
-        const labels = (chart.__bpOriginal && chart.__bpOriginal.labels)
-                       ? chart.__bpOriginal.labels
-                       : chart.data.labels;
-        const total = labels.length;
-        if (total >= 2) {
-          brushEl.noUiSlider.set([0, total - 1]); // 觸發聯動 → 其他 brush 也 reset
-        }
+      if (!chart) return;
+      const labels = (chart.__bpOriginal && chart.__bpOriginal.labels)
+                     ? chart.__bpOriginal.labels
+                     : chart.data.labels;
+      if (!labels || labels.length < 2) return;
+      // 用此 chart 的 full 第一筆/最後一筆日期作為「全部」範圍,
+      // __setAllBrushesToRange 內部會用 indexOf + closestDate 找其他 chart 對應 index
+      if (typeof __setAllBrushesToRange === 'function') {
+        __setAllBrushesToRange(labels[0], labels[labels.length - 1]);
       }
     });
   }
@@ -521,22 +521,62 @@
   // 聯動 flag — 避免無窮迴圈:當一個 brush 被聯動觸發時,其 handler 不再 propagate
   let __activeBrushSync = false;
 
+  // 把 5 個 brush 都設到同一個「日期範圍 [fromLabel, toLabel]」。
+  // 用日期(label 字串)而非 index,因為各 chart 的 full labels 索引不同
+  // (例如 weeklyChart 是週,trendChart 是日)。
+  //
+  // 注意:noUiSlider .set() 不會 fire 'change' event,所以原本依賴 'change'
+  // 的 propagateToOthers 無法被 quick chip / dblclick 觸發。改成這裡手動
+  // iterate 5 個 brush 直接 set,確保聯動。
+  function __setAllBrushesToRange(fromLabel, toLabel) {
+    __activeBrushSync = true;
+    try {
+      __BRUSH_CHARTS.forEach(canvasId => {
+        const brushEl = document.getElementById(canvasId + '-brush');
+        const canvas = document.getElementById(canvasId);
+        if (!brushEl || !brushEl.noUiSlider || !canvas) return;
+        const chart = Chart.getChart(canvas);
+        if (!chart) return;
+        const labels = (chart.__bpOriginal && chart.__bpOriginal.labels)
+                       ? chart.__bpOriginal.labels
+                       : chart.data.labels;
+        if (!labels || labels.length < 2) return;
+        let bs = labels.indexOf(fromLabel);
+        let be = labels.indexOf(toLabel);
+        if (bs < 0) bs = __findClosestDateIndex(labels, fromLabel);
+        if (be < 0) be = __findClosestDateIndex(labels, toLabel);
+        if (bs < 0) bs = 0;
+        if (be < 0) be = labels.length - 1;
+        if (bs >= be) be = Math.min(bs + 1, labels.length - 1);
+        brushEl.noUiSlider.set([bs, be]);
+      });
+    } finally {
+      __activeBrushSync = false;
+    }
+  }
+
   // 註冊快速範圍 chip 點擊 (聯動所有 brush)
   function __registerQuickChips() {
     document.querySelectorAll('.brush-quick').forEach(btn => {
       btn.addEventListener('click', () => {
         const days = parseInt(btn.dataset.days);
-        const brushEl = document.getElementById('trendChart-brush');
         const canvas = document.getElementById('trendChart');
-        if (!brushEl || !brushEl.noUiSlider || !canvas) return;
-        const chart = Chart.getChart(canvas);
+        const chart = canvas && Chart.getChart(canvas);
         if (!chart) return;
-        const labels = chart.data.labels;
-        const total = labels.length;
+        // 用 __bpOriginal.labels (full,212 entries) 計算「最後 N 天」起點;
+        // 若用 chart.data.labels (sliced 後例如只剩 28 entries),__dateIndexCutoff
+        // 會誤把 cutoff 對到 sliced 範圍內,跑出 2025-09 的早期資料 (bug)。
+        const fullLabels = (chart.__bpOriginal && chart.__bpOriginal.labels)
+                            ? chart.__bpOriginal.labels
+                            : chart.data.labels;
+        if (!fullLabels || fullLabels.length < 2) return;
+        const total = fullLabels.length;
         const e = total - 1;
-        // 按「最後 N 天日曆」找對應 index (非最後 N 個 data points)
-        const s = days <= 0 ? 0 : __dateIndexCutoff(labels, days);
-        brushEl.noUiSlider.set([s, e]); // 透過聯動帶動其他 brush
+        const s = days <= 0 ? 0 : __dateIndexCutoff(fullLabels, days);
+        const fromLabel = fullLabels[s];
+        const toLabel = fullLabels[e];
+        // 直接把 5 個 brush 都 set 到同樣的日期範圍 (不依賴 event propagation)
+        __setAllBrushesToRange(fromLabel, toLabel);
       });
     });
   }
@@ -787,7 +827,7 @@
     <a href="#dashboard" class="px-2 py-1 rounded bg-blue-50 text-blue-700">儀表板</a>
     <a href="#analytics" class="px-2 py-1 rounded hover:bg-blue-50">分析</a>
     <a href="#records" class="px-2 py-1 rounded hover:bg-blue-50">紀錄</a>
-    <div class="ml-auto text-[10px] text-slate-400 hidden sm:block">2026-05-19 23:48</div>
+    <div class="ml-auto text-[10px] text-slate-400 hidden sm:block">2026-05-19 23:53</div>
   </div>
 </nav>
 
@@ -25518,7 +25558,7 @@ if (focused) {
 </main>
 
 <div class="text-center text-xs text-slate-400 py-4 border-t border-slate-200">
-  bp-tracker · 離線單檔版 (mobile.html) · 產生於 2026-05-19 23:48
+  bp-tracker · 離線單檔版 (mobile.html) · 產生於 2026-05-19 23:53
 </div>
 
 </body>
