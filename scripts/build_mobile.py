@@ -96,38 +96,15 @@ def main():
 <style>
   body { font-family: -apple-system, BlinkMacSystemFont, "PingFang TC", "Microsoft JhengHei", sans-serif; }
   .num { font-variant-numeric: tabular-nums; font-feature-settings: "tnum"; }
-  /* Mobile-friendly tweaks: 讓現有 server 模板的元件在窄螢幕仍可讀 */
-  @media (max-width: 640px) {
-    body { font-size: 14px; }
-    h1 { font-size: 1.25rem !important; }
-    h2 { font-size: 1.1rem !important; }
-    /* 圖表容器在手機上自適應 */
-    canvas { max-width: 100% !important; }
-    /* Tailwind grid:強制大螢幕 grid 在手機塌成兩欄或單欄 (覆蓋 md:) */
-    .grid.md\:grid-cols-4 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-    .grid.md\:grid-cols-5 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-    .grid.md\:grid-cols-3 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-    .grid.md\:grid-cols-2 { grid-template-columns: 1fr; }
-    /* records table 字小一點 */
-    #records table { font-size: 12px; }
-    #records table th, #records table td { padding: 4px 6px !important; }
-  }
+
+  /* Filter chips */
   .filter-chip {
-    padding: 4px 12px;
-    border-radius: 9999px;
-    border: 1px solid #cbd5e1;
-    font-size: 0.75rem;
-    background: #f8fafc;
-    color: #475569;
-    transition: all 0.15s;
+    padding: 4px 12px; border-radius: 9999px; border: 1px solid #cbd5e1;
+    font-size: 0.75rem; background: #f8fafc; color: #475569; transition: all 0.15s;
   }
-  .filter-chip.active {
-    background: #2563eb;
-    color: white;
-    border-color: #2563eb;
-  }
-  .filter-chip:hover { transform: translateY(-1px); }
-  /* records.html 的高亮樣式 */
+  .filter-chip.active { background: #2563eb; color: white; border-color: #2563eb; }
+
+  /* row highlight (從 dashboard 跳到 records 用) */
   .row-focused {
     background: linear-gradient(90deg, rgba(251,191,36,0.35) 0%, rgba(251,191,36,0.18) 100%) !important;
     border-left: 4px solid #f59e0b;
@@ -138,8 +115,87 @@ def main():
     60%  { box-shadow: 0 0 0 8px rgba(245,158,11,0); }
     100% { box-shadow: 0 0 0 0 rgba(245,158,11,0); }
   }
-  /* mobile section anchor offset (sticky nav) */
-  section[id] { scroll-margin-top: 60px; }
+  section[id] { scroll-margin-top: 56px; }
+
+  /* ============================================================
+     Mobile overrides — 強制覆蓋 Tailwind 的 md: breakpoints
+     (Tailwind CDN 載入時序不穩,用 !important 確保排版正確)
+     ============================================================ */
+  @media (max-width: 767px) {
+    body { font-size: 14px; }
+    h1 { font-size: 1.25rem !important; line-height: 1.4 !important; margin-bottom: 0.5rem !important; }
+    h2 { font-size: 1rem !important; line-height: 1.4 !important; }
+    h3 { font-size: 0.95rem !important; }
+
+    /* 所有 grid 強制塌欄 (覆蓋 Tailwind md:grid-cols-N) */
+    .grid.grid-cols-1 { grid-template-columns: 1fr !important; }
+    [class*="md:grid-cols-2"] { grid-template-columns: 1fr !important; }
+    [class*="md:grid-cols-3"] { grid-template-columns: repeat(2, minmax(0, 1fr)) !important; }
+    [class*="md:grid-cols-4"] { grid-template-columns: repeat(2, minmax(0, 1fr)) !important; }
+    [class*="md:grid-cols-5"] { grid-template-columns: repeat(2, minmax(0, 1fr)) !important; }
+    /* 5 級分級標準表 — 強制 2x3 而不是 5 並排 */
+    .grid.grid-cols-2.md\:grid-cols-5 { grid-template-columns: repeat(2, 1fr) !important; }
+
+    /* Padding 緊縮 */
+    main { padding-left: 8px !important; padding-right: 8px !important; padding-top: 8px !important; }
+    .max-w-6xl { padding-left: 0 !important; padding-right: 0 !important; }
+    .p-4, .p-5, .p-6 { padding: 0.75rem !important; }
+    .p-3 { padding: 0.625rem !important; }
+    .mb-6 { margin-bottom: 1rem !important; }
+    .gap-4 { gap: 0.5rem !important; }
+
+    /* Cards 字體 */
+    .text-2xl { font-size: 1.25rem !important; }
+    .text-lg { font-size: 1rem !important; }
+    .text-sm { font-size: 0.8rem !important; }
+    .text-xs { font-size: 0.7rem !important; }
+
+    /* 圖表高度縮小 */
+    [style*="height: 380px"] { height: 240px !important; }
+    [style*="height: 320px"] { height: 220px !important; }
+    [style*="height: 280px"] { height: 200px !important; }
+    [style*="height: 260px"] { height: 180px !important; }
+    [style*="height: 240px"] { height: 180px !important; }
+    [style*="height: 220px"] { height: 160px !important; }
+    [style*="height: 130px"] { height: 110px !important; }
+
+    /* Canvas 永遠不超寬 */
+    canvas { max-width: 100% !important; }
+
+    /* Filter chips 字小 */
+    .filter-chip { font-size: 0.7rem !important; padding: 3px 8px !important; }
+
+    /* Buttons 字小 */
+    button { font-size: 0.75rem !important; }
+
+    /* Tables — 含 records 與 dashboard 的最新一次量測 */
+    table { font-size: 0.7rem !important; }
+    th, td { padding: 3px 4px !important; }
+    /* 超長 notes 折行 */
+    .max-w-\[200px\] { max-width: 100px !important; }
+    .truncate { white-space: normal !important; word-break: break-all; }
+
+    /* Records table 不要 overflow,直接內滑 */
+    .overflow-x-auto { overflow-x: auto !important; -webkit-overflow-scrolling: touch; }
+
+    /* 分級標準表的彩色卡 padding 緊 */
+    .grid-cols-2 > div.border-2 { padding: 0.375rem !important; }
+
+    /* nav: 避免 nav 內元素換行,可橫滑 */
+    nav .max-w-6xl { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+
+    /* 隱藏「離線 · datetime」之類非必要訊息以節省 nav 空間 */
+    nav .ml-auto { display: none; }
+  }
+
+  /* 極小螢幕 (< 380px,iPhone Mini 之類) */
+  @media (max-width: 380px) {
+    body { font-size: 13px; }
+    [class*="md:grid-cols-3"] { grid-template-columns: 1fr !important; }
+    .text-2xl { font-size: 1.1rem !important; }
+    /* 心跳圖跟最新量測 → 強制單欄 */
+    .grid.grid-cols-1.md\:grid-cols-2 { grid-template-columns: 1fr !important; }
+  }
 </style>
 <script>
   // 把 fetch API 改成讀 inline data,讓現有 server-render 出來的 JS 不用改也能跑
@@ -223,12 +279,12 @@ def main():
 <body class="bg-slate-50 text-slate-900 min-h-screen">
 
 <nav class="bg-white border-b border-slate-200 sticky top-0 z-50 shadow-sm">
-  <div class="max-w-6xl mx-auto px-3 py-2 flex items-center gap-1 overflow-x-auto whitespace-nowrap text-sm">
-    <span class="font-bold text-blue-700 mr-2">血壓</span>
-    <a href="#dashboard" class="px-2 py-1 rounded hover:bg-blue-50">儀表板</a>
+  <div class="max-w-6xl mx-auto px-3 py-2 flex items-center gap-2 text-sm">
+    <span class="font-bold text-blue-700">📊 血壓</span>
+    <a href="#dashboard" class="px-2 py-1 rounded bg-blue-50 text-blue-700">儀表板</a>
     <a href="#analytics" class="px-2 py-1 rounded hover:bg-blue-50">分析</a>
     <a href="#records" class="px-2 py-1 rounded hover:bg-blue-50">紀錄</a>
-    <div class="ml-auto text-xs text-slate-400">離線 · __GENERATED_AT__</div>
+    <div class="ml-auto text-[10px] text-slate-400 hidden sm:block">__GENERATED_AT__</div>
   </div>
 </nav>
 
@@ -264,6 +320,20 @@ __RECORDS_MAIN__
         count=1,
         flags=re.DOTALL,
     )
+
+    # records.html 的 table 1575 行對手機渲染太重,加 default hidden + 「載入完整紀錄」按鈕
+    # 在 records_main 的 <table> 之前 inject 一個 details 包起來
+    records_main = re.sub(
+        r'<div class="bg-white rounded-lg shadow-sm border border-slate-200 overflow-x-auto">\s*<table',
+        '<details><summary class="cursor-pointer bg-blue-50 hover:bg-blue-100 text-blue-800 '
+        'rounded px-3 py-2 my-2 text-sm font-medium">點此載入完整紀錄表格 '
+        '(<span class="num">1575+</span> 筆,需 1-2 秒)</summary>'
+        '<div class="bg-white rounded-lg shadow-sm border border-slate-200 overflow-x-auto mt-2">'
+        '<table',
+        records_main,
+        count=1,
+    )
+    records_main = records_main.replace('</table>\n</div>', '</table></div></details>', 1)
 
     html = template.replace(
         "__INLINE_PLACEHOLDER__",
