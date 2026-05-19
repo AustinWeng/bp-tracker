@@ -476,17 +476,23 @@ def main():
   function __injectBrush(canvasId) {
     const canvas = document.getElementById(canvasId);
     if (!canvas) return false;
-    const chart = Chart.getChart(canvas);
-    if (!chart || !chart.data.labels || chart.data.labels.length < 2) return false;
+    const initChart = Chart.getChart(canvas);
+    if (!initChart || !initChart.data.labels || initChart.data.labels.length < 2) return false;
     if (document.getElementById(canvasId + '-brush')) return true; // 已 inject
 
     const container = canvas.closest('div[style*="height"]') || canvas.parentElement;
     if (!container) return false;
 
-    const labels = chart.data.labels;
-    const total = labels.length;
-    // 預設「最近 30 天日曆」對應 index (非最後 30 個 data points)
-    const initStart = __dateIndexCutoff(labels, 30);
+    // 動態取目前 chart instance (避免 closure 抓到舊的 destroyed instance)
+    const getChart = () => Chart.getChart(document.getElementById(canvasId));
+    const getLabels = () => {
+      const c = getChart();
+      return c && c.data && c.data.labels ? c.data.labels : [];
+    };
+
+    const initLabels = initChart.data.labels;
+    const initTotal = initLabels.length;
+    const initStart = __dateIndexCutoff(initLabels, 30);
 
     const wrap = document.createElement('div');
     wrap.id = canvasId + '-brush-wrap';
@@ -494,46 +500,54 @@ def main():
     wrap.innerHTML = `
       <div id="${canvasId}-brush" class="chart-brush"></div>
       <div class="chart-brush-label">
-        <span id="${canvasId}-brush-from">${labels[initStart] || ''}</span>
+        <span id="${canvasId}-brush-from">${initLabels[initStart] || ''}</span>
         <span class="text-blue-600">↔ 拖兩端把手選範圍</span>
-        <span id="${canvasId}-brush-to">${labels[total - 1] || ''}</span>
+        <span id="${canvasId}-brush-to">${initLabels[initTotal - 1] || ''}</span>
       </div>
     `;
     container.parentNode.insertBefore(wrap, container.nextSibling);
 
     const brushEl = document.getElementById(canvasId + '-brush');
     noUiSlider.create(brushEl, {
-      start: [initStart, total - 1],
+      start: [initStart, initTotal - 1],
       connect: true,
-      range: { min: 0, max: total - 1 },
+      range: { min: 0, max: initTotal - 1 },
       step: 1,
       margin: 1,
       behaviour: 'tap-drag',
       tooltips: [
-        { to: i => (labels[Math.round(i)] || '').slice(5), from: Number },  // MM-DD 短格式
-        { to: i => (labels[Math.round(i)] || '').slice(5), from: Number },
+        // 動態查 labels (chart 重建後仍正確)
+        { to: i => (getLabels()[Math.round(i)] || '').slice(5), from: Number },
+        { to: i => (getLabels()[Math.round(i)] || '').slice(5), from: Number },
       ],
     });
 
     function applyRange() {
+      const chart = getChart();
+      if (!chart || !chart.data || !chart.data.labels) return;
+      const lbls = chart.data.labels;
+      if (lbls.length < 2) return;
       const values = brushEl.noUiSlider.get(true);
       let s = Math.round(values[0]);
       let e = Math.round(values[1]);
-      const lbls = chart.data.labels;
       if (s < 0) s = 0;
       if (e > lbls.length - 1) e = lbls.length - 1;
+      if (s > e) s = e;
       const fromEl = document.getElementById(canvasId + '-brush-from');
       const toEl = document.getElementById(canvasId + '-brush-to');
       if (fromEl) fromEl.textContent = lbls[s] || '';
       if (toEl) toEl.textContent = lbls[e] || '';
       __brushSyncing = true;
-      chart.options.scales.x.min = s;
-      chart.options.scales.x.max = e;
-      chart.update('none');
+      try {
+        if (chart.options && chart.options.scales && chart.options.scales.x) {
+          chart.options.scales.x.min = s;
+          chart.options.scales.x.max = e;
+        }
+        chart.update('none');
+      } catch (e) { /* chart possibly destroyed mid-update, ignore */ }
       __brushSyncing = false;
 
       // 聯動:把目前範圍同步到其他 chart 的 brush
-      // 用 label (日期字串) 對應,避免不同 chart labels 長度不一
       if (!__activeBrushSync) {
         __activeBrushSync = true;
         const fromLabel = lbls[s];
@@ -544,11 +558,10 @@ def main():
           const otherCanvas = document.getElementById(otherId);
           if (!otherBrushEl || !otherBrushEl.noUiSlider || !otherCanvas) return;
           const otherChart = Chart.getChart(otherCanvas);
-          if (!otherChart) return;
+          if (!otherChart || !otherChart.data || !otherChart.data.labels) return;
           const otherLabels = otherChart.data.labels;
           const otherTotal = otherLabels.length;
           if (otherTotal < 2) return;
-          // 先試直接 indexOf,失敗 fallback 到比例對應
           let otherS = otherLabels.indexOf(fromLabel);
           let otherE = otherLabels.indexOf(toLabel);
           if (otherS < 0 || otherE < 0) {
@@ -621,7 +634,8 @@ def main():
     if (!allDone) setTimeout(__injectAllBrushes, 300);
   }
 
-  // 監聽 chart afterUpdate, 當 labels 變化時 (例如切 30/90/180/全部) 自動同步 brush
+  // 監聽 chart afterUpdate, 當 labels 變化時 (例如切 30/90/180/全部、或 filter chip
+  // 觸發 chart destroy + recreate) 自動同步 brush
   function __registerBrushSync() {
     if (typeof Chart === 'undefined') return setTimeout(__registerBrushSync, 50);
     Chart.register({
@@ -635,17 +649,34 @@ def main():
         const total = chart.data.labels.length;
         if (total < 2) return;
         const opts = brushEl.noUiSlider.options;
-        if (opts.range.max !== total - 1) {
-          // labels 變了, update slider range + tooltip formatter (用日曆 30 天)
-          const newLabels = chart.data.labels;
+        // labels 數量或首/末 label 變了 → 重設 range
+        // (filter chip 切換可能讓 chart 的 labels 長度不變但內容變)
+        const newLabels = chart.data.labels;
+        const rangeChanged = opts.range.max !== total - 1;
+        if (rangeChanged) {
           brushEl.noUiSlider.updateOptions({
             start: [__dateIndexCutoff(newLabels, 30), total - 1],
             range: { min: 0, max: total - 1 },
+            // tooltips 用 closure 抓 chart.data.labels 動態查
             tooltips: [
-              { to: i => (newLabels[Math.round(i)] || '').slice(5), from: Number },
-              { to: i => (newLabels[Math.round(i)] || '').slice(5), from: Number },
+              { to: i => (chart.data.labels[Math.round(i)] || '').slice(5), from: Number },
+              { to: i => (chart.data.labels[Math.round(i)] || '').slice(5), from: Number },
             ],
           }, true);
+        } else {
+          // 範圍沒變但 labels 內容可能變了 (filter chip 切換),
+          // 把當前 brush 範圍套到新 chart options
+          const values = brushEl.noUiSlider.get(true);
+          const s = Math.round(values[0]);
+          const e = Math.round(values[1]);
+          if (chart.options && chart.options.scales && chart.options.scales.x) {
+            if (chart.options.scales.x.min !== s || chart.options.scales.x.max !== e) {
+              chart.options.scales.x.min = Math.max(0, Math.min(s, total - 1));
+              chart.options.scales.x.max = Math.max(0, Math.min(e, total - 1));
+              // 注意:此處不能再呼叫 chart.update() (會進無限迴圈)
+              // 由下一個 render cycle 自然套用
+            }
+          }
         }
       },
     });
