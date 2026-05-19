@@ -638,20 +638,10 @@ def main():
   setTimeout(__registerQuickChips, 800);
   setTimeout(__updateBrushStatus, 1000);
   // (mobile 不再需要 force loadData(9999):fetch override 已直接回全部資料)
-
-  // 啟動完成後 force 一次 brush 預設範圍 (最近 30 天日曆),
-  // 避免 chart loadData race condition 讓 brushSync 設到不完整範圍
-  setTimeout(() => {
-    if (!window.matchMedia('(max-width: 767px)').matches) return;
-    const brushEl = document.getElementById('trendChart-brush');
-    const canvas = document.getElementById('trendChart');
-    if (!brushEl || !brushEl.noUiSlider || !canvas) return;
-    const chart = Chart.getChart(canvas);
-    if (!chart) return;
-    const labels = chart.data.labels;
-    if (labels.length < 2) return;
-    brushEl.noUiSlider.set([__dateIndexCutoff(labels, 30), labels.length - 1]);
-  }, 1800);
+  // (移除舊版「setTimeout 1800ms force brush.set」補丁 — 它用 sliced chart.data.labels
+  //  算 __dateIndexCutoff(28 sliced, 30) = 0,把 trendChart brush 卡在 [0, 27]
+  //  顯示最早的 2025-09 期資料,造成「殘影」bug。
+  //  __injectBrush 第一次跑時就已正確 init brush range,不需要再 force set。)
 
   function __injectAllBrushes() {
     if (typeof Chart === 'undefined' || typeof noUiSlider === 'undefined') {
