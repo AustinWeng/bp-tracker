@@ -164,9 +164,8 @@ def main():
     section#dashboard > div.bg-white.p-3:not(.mobile-summary) { display: none !important; }
   }
 
-  /* Chart 區域 cursor 暗示可拖曳 */
-  canvas { cursor: grab; touch-action: pan-y; }
-  canvas:active { cursor: grabbing; }
+  /* Chart 區域:不啟用拖曳互動 (避免手機 scroll 干擾),範圍控制透過下方 brush */
+  canvas { touch-action: auto; }
 
   /* Brush slider (chart 下方範圍選擇器,套用於 trend/pulse/varSys/varDia) */
   .chart-brush-wrap { margin-top: 26px; padding: 0 6px; }  /* 騰出空間給 handle tooltip,左右留邊避免 tooltip 溢出 */
@@ -369,35 +368,25 @@ def main():
       Chart.defaults.plugins.tooltip.bodyFont = { size: 11 };
     }
 
+    // 全部 disable — 手機上 pinch/wheel/pan 會干擾頁面 scroll
+    // 範圍控制全部交由底下 brush slider 處理
     Chart.defaults.plugins.zoom = {
-      pan: {
-        enabled: true,
-        mode: 'x',
-        threshold: 10,   // 拖 10px 後才啟動,避免誤觸
-      },
+      pan: { enabled: false },
       zoom: {
-        wheel: { enabled: true, speed: 0.1 },
-        pinch: { enabled: true },  // 手機 pinch 縮放
-        mode: 'x',
-        drag: { enabled: false },  // 不要框選 zoom (跟 pan 衝突)
-      },
-      limits: {
-        x: { minRange: 5 },   // 至少看 5 個 data point
+        wheel: { enabled: false },
+        pinch: { enabled: false },
+        drag: { enabled: false },
       },
     };
-    // 雙擊 reset zoom (自訂全域 listener) + reset 該 chart 對應的 brush
+    // 雙擊 chart → 4 個 brush 全部 reset 到完整範圍 (透過聯動自動同步)
     document.addEventListener('dblclick', (e) => {
       const canvas = e.target.closest && e.target.closest('canvas');
       if (!canvas) return;
-      const chart = Chart.getChart(canvas);
-      if (chart && typeof chart.resetZoom === 'function') {
-        chart.resetZoom();
-      }
-      // 同步 reset brush 到完整範圍
       const brushEl = document.getElementById(canvas.id + '-brush');
+      const chart = Chart.getChart(canvas);
       if (brushEl && brushEl.noUiSlider && chart) {
         const total = chart.data.labels.length;
-        brushEl.noUiSlider.set([0, total - 1]);
+        brushEl.noUiSlider.set([0, total - 1]); // 觸發聯動 → 其他 brush 也 reset
       }
     });
   }
@@ -465,12 +454,44 @@ def main():
       chart.options.scales.x.max = e;
       chart.update('none');
       __brushSyncing = false;
+
+      // 聯動:把目前範圍同步到其他 chart 的 brush
+      // 用 label (日期字串) 對應,避免不同 chart labels 長度不一
+      if (!__activeBrushSync) {
+        __activeBrushSync = true;
+        const fromLabel = lbls[s];
+        const toLabel = lbls[e];
+        __BRUSH_CHARTS.forEach(otherId => {
+          if (otherId === canvasId) return;
+          const otherBrushEl = document.getElementById(otherId + '-brush');
+          const otherCanvas = document.getElementById(otherId);
+          if (!otherBrushEl || !otherBrushEl.noUiSlider || !otherCanvas) return;
+          const otherChart = Chart.getChart(otherCanvas);
+          if (!otherChart) return;
+          const otherLabels = otherChart.data.labels;
+          const otherTotal = otherLabels.length;
+          if (otherTotal < 2) return;
+          // 先試直接 indexOf,失敗 fallback 到比例對應
+          let otherS = otherLabels.indexOf(fromLabel);
+          let otherE = otherLabels.indexOf(toLabel);
+          if (otherS < 0 || otherE < 0) {
+            otherS = Math.max(0, Math.min(Math.round((s / lbls.length) * otherTotal), otherTotal - 1));
+            otherE = Math.max(0, Math.min(Math.round((e / lbls.length) * otherTotal), otherTotal - 1));
+          }
+          if (otherS >= otherE) otherE = Math.min(otherS + 1, otherTotal - 1);
+          otherBrushEl.noUiSlider.set([otherS, otherE]);
+        });
+        __activeBrushSync = false;
+      }
     }
 
     brushEl.noUiSlider.on('update', applyRange);
     applyRange();
     return true;
   }
+
+  // 聯動 flag — 避免無窮迴圈:當一個 brush 被聯動觸發時,其 handler 不再 propagate
+  let __activeBrushSync = false;
 
   function __injectAllBrushes() {
     if (typeof Chart === 'undefined' || typeof noUiSlider === 'undefined') {
@@ -587,7 +608,7 @@ def main():
     </div>
   </details>
   <div class="text-[10px] text-blue-600 mt-2 flex items-center gap-1">
-    💡 圖表可手指縮放 / 拖動,雙擊重置
+    💡 拖任一圖表下方藍色 bar 兩端可改變範圍 (4 張圖聯動),雙擊圖表重置
   </div>
 </div>
 
