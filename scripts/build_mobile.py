@@ -78,6 +78,37 @@ def main():
         "analytics": analytics_data,
     }
 
+    # 算 mobile compact summary 用的 stats (TW 2022 指引)
+    all_dates = sorted({r["measure_date"] for r in raw_all})
+    if all_dates:
+        from datetime import timedelta
+        latest_d = date.fromisoformat(all_dates[-1])
+        cutoff = (latest_d - timedelta(days=30)).isoformat()
+        recent30 = [r for r in raw_all if r["measure_date"] >= cutoff and r.get("systolic")]
+    else:
+        recent30 = []
+
+    sys_m = sum(r["systolic"] for r in recent30) / len(recent30) if recent30 else None
+    dia_m = sum(r["diastolic"] for r in recent30) / len(recent30) if recent30 else None
+
+    def classify_tw(s, d):
+        if not s or not d:
+            return ("unknown", "未知", "bg-slate-300 text-slate-700")
+        if s >= 180 or d >= 120:
+            return ("crisis", "高血壓危象", "bg-red-700 text-white")
+        if s >= 140 or d >= 90:
+            return ("stage2", "高血壓 2 級", "bg-red-500 text-white")
+        if s >= 130 or d >= 80:
+            return ("stage1", "高血壓 1 級", "bg-orange-400 text-white")
+        if s >= 120:
+            return ("elevated", "血壓偏高", "bg-yellow-400 text-slate-900")
+        return ("normal", "正常", "bg-green-500 text-white")
+
+    _cls_key, cls_label, cls_bg = classify_tw(sys_m, dia_m)
+    avg_display = f"{round(sys_m)}/{round(dia_m)}" if sys_m and dia_m else "—"
+    n_total = len(raw_all)
+    date_range_str = f"{all_dates[0][:7]} ~ {all_dates[-1][:7]}" if all_dates else "—"
+
     generated_at = datetime.now().strftime("%Y-%m-%d %H:%M")
 
     template = r"""<!DOCTYPE html>
@@ -93,6 +124,8 @@ def main():
 <script src="https://cdn.tailwindcss.com"></script>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.6/dist/chart.umd.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/hammerjs@2.0.8/hammer.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-zoom@2.2.0/dist/chartjs-plugin-zoom.min.js"></script>
 <style>
   body { font-family: -apple-system, BlinkMacSystemFont, "PingFang TC", "Microsoft JhengHei", sans-serif; }
   .num { font-variant-numeric: tabular-nums; font-feature-settings: "tnum"; }
@@ -116,6 +149,22 @@ def main():
     100% { box-shadow: 0 0 0 0 rgba(245,158,11,0); }
   }
   section[id] { scroll-margin-top: 56px; }
+
+  /* Compact summary card — 預設顯示,desktop 才隱藏 */
+  .mobile-summary { display: block; }
+  @media (min-width: 768px) {
+    .mobile-summary { display: none !important; }
+  }
+  @media (max-width: 767px) {
+    /* 隱藏 dashboard 的 4 stat cards (與「分析洞察」grid-cols-2 md:grid-cols-4 區隔) */
+    section#dashboard > div.grid.grid-cols-1.md\:grid-cols-4 { display: none !important; }
+    /* 隱藏分級標準表 (用 p-3 的 card),保留 mobile-summary (有 .mobile-summary class) */
+    section#dashboard > div.bg-white.p-3:not(.mobile-summary) { display: none !important; }
+  }
+
+  /* Chart 區域 cursor 暗示可拖曳 */
+  canvas { cursor: grab; touch-action: pan-y; }
+  canvas:active { cursor: grabbing; }
 
   /* ============================================================
      Mobile overrides — 強制覆蓋 Tailwind 的 md: breakpoints
@@ -243,6 +292,40 @@ def main():
     return __origFetch(url, opts);
   };
 
+  // 設定 Chart.js 全域 zoom/pan plugin 預設 (chartjs-plugin-zoom 載入後自動 register)
+  function __applyChartDefaults() {
+    if (typeof Chart === 'undefined') return setTimeout(__applyChartDefaults, 30);
+    // chartjs-plugin-zoom UMD 載入後會自動 register,我們只設 defaults
+    Chart.defaults.plugins = Chart.defaults.plugins || {};
+    Chart.defaults.plugins.zoom = {
+      pan: {
+        enabled: true,
+        mode: 'x',
+        threshold: 10,   // 拖 10px 後才啟動,避免誤觸
+      },
+      zoom: {
+        wheel: { enabled: true, speed: 0.1 },
+        pinch: { enabled: true },  // 手機 pinch 縮放
+        mode: 'x',
+        drag: { enabled: false },  // 不要框選 zoom (跟 pan 衝突)
+      },
+      limits: {
+        x: { minRange: 5 },   // 至少看 5 個 data point
+      },
+    };
+    // 雙擊 reset zoom (自訂全域 listener)
+    document.addEventListener('dblclick', (e) => {
+      // 找最近的 canvas
+      const canvas = e.target.closest && e.target.closest('canvas');
+      if (!canvas) return;
+      const chart = Chart.getChart(canvas);
+      if (chart && typeof chart.resetZoom === 'function') {
+        chart.resetZoom();
+      }
+    });
+  }
+  __applyChartDefaults();
+
   // 攔截「點圖表跳轉到記錄頁」改成 scroll 到 #records section + 高亮該日
   document.addEventListener('DOMContentLoaded', () => {
     // 把 window.location.href = '/records?focus=YYYY-MM-DD' 改成 anchor scroll
@@ -291,6 +374,34 @@ def main():
 <main class="max-w-6xl mx-auto px-3 py-3 space-y-6">
 
 <section id="dashboard">
+
+<!-- Mobile compact summary (取代原本 4 stat cards + 分級標準表) -->
+<div class="mobile-summary bg-white rounded-lg p-3 mb-3 border border-slate-200">
+  <div class="flex items-center justify-between gap-3">
+    <div>
+      <div class="text-3xl font-bold num leading-none">__AVG_DISPLAY__</div>
+      <div class="text-[10px] text-slate-400 mt-1">近 30 天平均 mmHg</div>
+    </div>
+    <div class="text-right">
+      <div class="inline-block rounded px-2 py-1 text-xs font-medium __CLS_BG__">__CLS_LABEL__</div>
+      <div class="text-[10px] text-slate-400 num mt-1">__N_TOTAL__ 筆 · __DATE_RANGE__</div>
+    </div>
+  </div>
+  <details class="mt-2 text-xs border-t border-slate-100 pt-2">
+    <summary class="text-slate-500 cursor-pointer">📐 查看血壓分級標準 (TW 2022)</summary>
+    <div class="mt-2 grid grid-cols-2 gap-1 text-[10px]">
+      <div class="rounded p-1.5 bg-green-500 text-white"><b>正常</b><br>&lt; 120 / &lt; 80</div>
+      <div class="rounded p-1.5 bg-yellow-400"><b>偏高</b><br>120-129 / &lt; 80</div>
+      <div class="rounded p-1.5 bg-orange-400 text-white"><b>1 級</b><br>130-139 / 80-89</div>
+      <div class="rounded p-1.5 bg-red-500 text-white"><b>2 級</b><br>≥ 140 / ≥ 90</div>
+      <div class="rounded p-1.5 bg-red-700 text-white col-span-2 text-center"><b>危象</b> ≥ 180 / ≥ 120</div>
+    </div>
+  </details>
+  <div class="text-[10px] text-blue-600 mt-2 flex items-center gap-1">
+    💡 圖表可手指縮放 / 拖動,雙擊重置
+  </div>
+</div>
+
 __DASHBOARD_MAIN__
 </section>
 
@@ -343,6 +454,11 @@ __RECORDS_MAIN__
     html = html.replace("__ANALYTICS_MAIN_INNER__", analytics_inner)
     html = html.replace("__RECORDS_MAIN__", records_main)
     html = html.replace("__GENERATED_AT__", generated_at)
+    html = html.replace("__AVG_DISPLAY__", avg_display)
+    html = html.replace("__CLS_LABEL__", cls_label)
+    html = html.replace("__CLS_BG__", cls_bg)
+    html = html.replace("__N_TOTAL__", f"{n_total:,}")
+    html = html.replace("__DATE_RANGE__", date_range_str)
 
     OUT.write_text(html, encoding="utf-8")
     size_kb = OUT.stat().st_size / 1024
