@@ -453,7 +453,8 @@ def main():
     const values = brushEl.noUiSlider.get(true);
     const s = Math.round(values[0]);
     const e = Math.round(values[1]);
-    const labels = chart.data.labels;
+    // 用 cache (未 slice 的) 顯示日期
+    const labels = chart.__bpOriginal ? chart.__bpOriginal.labels : chart.data.labels;
     const fromLabel = labels[s];
     const toLabel = labels[e];
     if (!fromLabel || !toLabel) return;
@@ -464,7 +465,6 @@ def main():
     if (statusEl) {
       statusEl.textContent = `${fromLabel.slice(5)} ~ ${toLabel.slice(5)} (${dayCount} 天)`;
     }
-    // 更新 quick chip active 狀態 (按日曆天比對)
     const total = labels.length;
     document.querySelectorAll('.brush-quick').forEach(btn => {
       const d = parseInt(btn.dataset.days);
@@ -525,7 +525,14 @@ def main():
     function applyRange() {
       const chart = getChart();
       if (!chart || !chart.data || !chart.data.labels) return;
-      const lbls = chart.data.labels;
+      if (!chart.__bpOriginal) {
+        chart.__bpOriginal = {
+          labels: chart.data.labels.slice(),
+          datasets: chart.data.datasets.map(d => ({ data: (d.data || []).slice() })),
+        };
+      }
+      const orig = chart.__bpOriginal;
+      const lbls = orig.labels;
       if (lbls.length < 2) return;
       const values = brushEl.noUiSlider.get(true);
       let s = Math.round(values[0]);
@@ -533,44 +540,65 @@ def main():
       if (s < 0) s = 0;
       if (e > lbls.length - 1) e = lbls.length - 1;
       if (s > e) s = e;
+      const fromLabel = lbls[s];
+      const toLabel = lbls[e];
       const fromEl = document.getElementById(canvasId + '-brush-from');
       const toEl = document.getElementById(canvasId + '-brush-to');
-      if (fromEl) fromEl.textContent = lbls[s] || '';
-      if (toEl) toEl.textContent = lbls[e] || '';
+      if (fromEl) fromEl.textContent = fromLabel || '';
+      if (toEl) toEl.textContent = toLabel || '';
       __brushSyncing = true;
       try {
+        chart.data.labels = lbls.slice(s, e + 1);
+        orig.datasets.forEach((d, i) => {
+          if (chart.data.datasets[i]) {
+            chart.data.datasets[i].data = d.data.slice(s, e + 1);
+          }
+        });
         if (chart.options && chart.options.scales && chart.options.scales.x) {
-          chart.options.scales.x.min = s;
-          chart.options.scales.x.max = e;
+          delete chart.options.scales.x.min;
+          delete chart.options.scales.x.max;
         }
         chart.update('none');
       } catch (e) { /* chart possibly destroyed mid-update, ignore */ }
       __brushSyncing = false;
+    }
 
-      // 聯動:把目前範圍同步到其他 chart 的 brush
-      if (!__activeBrushSync) {
-        __activeBrushSync = true;
-        const fromLabel = lbls[s];
-        const toLabel = lbls[e];
+    // 聯動函式 — 只在 'change' event 觸發 (user 拖完 / chip click / 程式 .set()),
+    // 不在 updateOptions 程式變動 range 時觸發
+    function propagateToOthers() {
+      if (__activeBrushSync) return;
+      const chart = getChart();
+      if (!chart || !chart.__bpOriginal) return;
+      const orig = chart.__bpOriginal;
+      const values = brushEl.noUiSlider.get(true);
+      const s = Math.round(values[0]);
+      const e = Math.round(values[1]);
+      const fromLabel = orig.labels[s];
+      const toLabel = orig.labels[e];
+      __activeBrushSync = true;
+      try {
         __BRUSH_CHARTS.forEach(otherId => {
           if (otherId === canvasId) return;
           const otherBrushEl = document.getElementById(otherId + '-brush');
           const otherCanvas = document.getElementById(otherId);
           if (!otherBrushEl || !otherBrushEl.noUiSlider || !otherCanvas) return;
           const otherChart = Chart.getChart(otherCanvas);
-          if (!otherChart || !otherChart.data || !otherChart.data.labels) return;
-          const otherLabels = otherChart.data.labels;
+          if (!otherChart) return;
+          const otherLabels = (otherChart.__bpOriginal && otherChart.__bpOriginal.labels)
+                              ? otherChart.__bpOriginal.labels
+                              : otherChart.data.labels;
           const otherTotal = otherLabels.length;
           if (otherTotal < 2) return;
           let otherS = otherLabels.indexOf(fromLabel);
           let otherE = otherLabels.indexOf(toLabel);
           if (otherS < 0 || otherE < 0) {
-            otherS = Math.max(0, Math.min(Math.round((s / lbls.length) * otherTotal), otherTotal - 1));
-            otherE = Math.max(0, Math.min(Math.round((e / lbls.length) * otherTotal), otherTotal - 1));
+            otherS = Math.max(0, Math.min(Math.round((s / orig.labels.length) * otherTotal), otherTotal - 1));
+            otherE = Math.max(0, Math.min(Math.round((e / orig.labels.length) * otherTotal), otherTotal - 1));
           }
           if (otherS >= otherE) otherE = Math.min(otherS + 1, otherTotal - 1);
           otherBrushEl.noUiSlider.set([otherS, otherE]);
         });
+      } finally {
         __activeBrushSync = false;
       }
     }
@@ -579,6 +607,8 @@ def main():
       applyRange();
       __updateBrushStatus();
     });
+    // 聯動 — 在 user 拖完或 chip click 後 (程式 updateOptions 不觸發)
+    brushEl.noUiSlider.on('change', propagateToOthers);
     applyRange();
     return true;
   }
@@ -634,54 +664,49 @@ def main():
     if (!allDone) setTimeout(__injectAllBrushes, 300);
   }
 
-  // 監聽 chart afterUpdate, 當 labels 變化時 (例如切 30/90/180/全部、或 filter chip
-  // 觸發 chart destroy + recreate) 自動同步 brush
-  function __registerBrushSync() {
-    if (typeof Chart === 'undefined') return setTimeout(__registerBrushSync, 50);
-    Chart.register({
-      id: 'brushSync',
-      afterUpdate(chart) {
-        if (__brushSyncing) return;
-        const canvasId = chart.canvas.id;
-        if (!__BRUSH_CHARTS.includes(canvasId)) return;
-        const brushEl = document.getElementById(canvasId + '-brush');
-        if (!brushEl || !brushEl.noUiSlider) return;
-        const total = chart.data.labels.length;
-        if (total < 2) return;
-        const opts = brushEl.noUiSlider.options;
-        // labels 數量或首/末 label 變了 → 重設 range
-        // (filter chip 切換可能讓 chart 的 labels 長度不變但內容變)
-        const newLabels = chart.data.labels;
-        const rangeChanged = opts.range.max !== total - 1;
-        if (rangeChanged) {
-          brushEl.noUiSlider.updateOptions({
-            start: [__dateIndexCutoff(newLabels, 30), total - 1],
-            range: { min: 0, max: total - 1 },
-            // tooltips 用 closure 抓 chart.data.labels 動態查
-            tooltips: [
-              { to: i => (chart.data.labels[Math.round(i)] || '').slice(5), from: Number },
-              { to: i => (chart.data.labels[Math.round(i)] || '').slice(5), from: Number },
-            ],
-          }, true);
-        } else {
-          // 範圍沒變但 labels 內容可能變了 (filter chip 切換),
-          // 把當前 brush 範圍套到新 chart options
-          const values = brushEl.noUiSlider.get(true);
-          const s = Math.round(values[0]);
-          const e = Math.round(values[1]);
-          if (chart.options && chart.options.scales && chart.options.scales.x) {
-            if (chart.options.scales.x.min !== s || chart.options.scales.x.max !== e) {
-              chart.options.scales.x.min = Math.max(0, Math.min(s, total - 1));
-              chart.options.scales.x.max = Math.max(0, Math.min(e, total - 1));
-              // 注意:此處不能再呼叫 chart.update() (會進無限迴圈)
-              // 由下一個 render cycle 自然套用
-            }
-          }
-        }
-      },
+  // Filter chip 切換後 chart 被 destroy + new Chart, 用此 reset 所有 brush
+  function __resetAllBrushes() {
+    __BRUSH_CHARTS.forEach(canvasId => {
+      const brushEl = document.getElementById(canvasId + '-brush');
+      const canvas = document.getElementById(canvasId);
+      if (!brushEl || !brushEl.noUiSlider || !canvas) return;
+      const chart = Chart.getChart(canvas);
+      if (!chart || !chart.data.labels || chart.data.labels.length < 2) return;
+      // 清掉舊 instance 殘留 cache (new chart 不會有,但保險)
+      delete chart.__bpOriginal;
+      const total = chart.data.labels.length;
+      const initStart = __dateIndexCutoff(chart.data.labels, 30);
+      brushEl.noUiSlider.updateOptions({
+        start: [initStart, total - 1],
+        range: { min: 0, max: total - 1 },
+        tooltips: [
+          { to: i => {
+            const c = Chart.getChart(document.getElementById(canvasId));
+            const ls = c && c.__bpOriginal ? c.__bpOriginal.labels : (c?.data.labels || []);
+            return (ls[Math.round(i)] || '').slice(5);
+          }, from: Number },
+          { to: i => {
+            const c = Chart.getChart(document.getElementById(canvasId));
+            const ls = c && c.__bpOriginal ? c.__bpOriginal.labels : (c?.data.labels || []);
+            return (ls[Math.round(i)] || '').slice(5);
+          }, from: Number },
+        ],
+      }, true); // fire set event → trigger applyRange
     });
   }
-  __registerBrushSync();
+
+  // 監聽所有 filter chip 點擊 (dashboard.html 內的時段/手/次序/指標 chips),
+  // 切換後 chart 被 dashboard.html 的 applyFiltersAndDraw 重建,
+  // 等 100ms 讓 new chart fully rendered 再 reset brushes
+  function __registerFilterChipListeners() {
+    document.querySelectorAll('.filter-chip').forEach(btn => {
+      btn.addEventListener('click', () => {
+        setTimeout(__resetAllBrushes, 120);
+      });
+    });
+  }
+  setTimeout(__registerFilterChipListeners, 1500);
+
   setTimeout(__injectAllBrushes, 600);
 
   // 攔截「點圖表跳轉到記錄頁」改成 scroll 到 #records section + 高亮該日
