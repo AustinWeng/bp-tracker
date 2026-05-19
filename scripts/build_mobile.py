@@ -126,6 +126,8 @@ def main():
 <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/hammerjs@2.0.8/hammer.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-zoom@2.2.0/dist/chartjs-plugin-zoom.min.js"></script>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/nouislider@15.7.1/dist/nouislider.min.css">
+<script src="https://cdn.jsdelivr.net/npm/nouislider@15.7.1/dist/nouislider.min.js"></script>
 <style>
   body { font-family: -apple-system, BlinkMacSystemFont, "PingFang TC", "Microsoft JhengHei", sans-serif; }
   .num { font-variant-numeric: tabular-nums; font-feature-settings: "tnum"; }
@@ -165,6 +167,38 @@ def main():
   /* Chart 區域 cursor 暗示可拖曳 */
   canvas { cursor: grab; touch-action: pan-y; }
   canvas:active { cursor: grabbing; }
+
+  /* Brush slider (趨勢圖下方範圍選擇器) */
+  .chart-brush {
+    margin: 12px 10px 4px;
+    height: 18px;
+  }
+  .chart-brush .noUi-connect { background: #2563eb; }
+  .chart-brush .noUi-handle {
+    background: #fff;
+    border: 2px solid #2563eb;
+    border-radius: 50%;
+    width: 22px !important;
+    height: 22px !important;
+    right: -11px !important;
+    top: -4px !important;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.2);
+    cursor: ew-resize;
+  }
+  .chart-brush .noUi-handle::before,
+  .chart-brush .noUi-handle::after { display: none; }
+  .chart-brush.noUi-target { height: 14px; }
+  .chart-brush-label {
+    display: flex; justify-content: space-between;
+    font-size: 0.65rem; color: #64748b;
+    padding: 0 6px;
+    margin-top: 4px;
+    font-variant-numeric: tabular-nums;
+  }
+  @media (max-width: 767px) {
+    .chart-brush .noUi-handle { width: 26px !important; height: 26px !important; right: -13px !important; top: -6px !important; }
+    .chart-brush.noUi-target { height: 14px; }
+  }
 
   /* ============================================================
      Mobile overrides — 強制覆蓋 Tailwind 的 md: breakpoints
@@ -328,18 +362,113 @@ def main():
         x: { minRange: 5 },   // 至少看 5 個 data point
       },
     };
-    // 雙擊 reset zoom (自訂全域 listener)
+    // 雙擊 reset zoom (自訂全域 listener) + reset brush
     document.addEventListener('dblclick', (e) => {
-      // 找最近的 canvas
       const canvas = e.target.closest && e.target.closest('canvas');
       if (!canvas) return;
       const chart = Chart.getChart(canvas);
       if (chart && typeof chart.resetZoom === 'function') {
         chart.resetZoom();
       }
+      // 若是 trendChart, 也 reset brush 到完整範圍
+      if (canvas.id === 'trendChart' && window.__trendBrush) {
+        const total = chart.data.labels.length;
+        window.__trendBrush.set([0, total - 1]);
+      }
     });
   }
   __applyChartDefaults();
+
+  // ----- Brush range slider for #trendChart -----
+  // 在趨勢圖下方加一條 dual-handle slider, 拖兩端控制 X 軸顯示範圍
+  let __brushSyncing = false;
+  function __injectTrendBrush() {
+    if (typeof Chart === 'undefined' || typeof noUiSlider === 'undefined') {
+      return setTimeout(__injectTrendBrush, 100);
+    }
+    const canvas = document.getElementById('trendChart');
+    if (!canvas) return setTimeout(__injectTrendBrush, 200);
+    const chart = Chart.getChart(canvas);
+    if (!chart || !chart.data.labels || chart.data.labels.length < 2) {
+      return setTimeout(__injectTrendBrush, 200);
+    }
+    if (document.getElementById('trendBrush')) return; // 已 inject
+
+    // 找 chart container (內有 <canvas>) 並在其後加 brush
+    const container = canvas.closest('div[style*="height"]') || canvas.parentElement;
+    if (!container) return;
+
+    const wrap = document.createElement('div');
+    wrap.id = 'trendBrushWrap';
+    const labels = chart.data.labels;
+    const total = labels.length;
+    const initStart = Math.max(0, total - 30);
+    wrap.innerHTML = `
+      <div id="trendBrush" class="chart-brush"></div>
+      <div class="chart-brush-label">
+        <span id="trendBrushFrom">${labels[initStart] || ''}</span>
+        <span class="text-blue-600">↔ 拖兩端把手選範圍</span>
+        <span id="trendBrushTo">${labels[total - 1] || ''}</span>
+      </div>
+    `;
+    container.parentNode.insertBefore(wrap, container.nextSibling);
+
+    const brushEl = document.getElementById('trendBrush');
+    noUiSlider.create(brushEl, {
+      start: [initStart, total - 1],
+      connect: true,
+      range: { min: 0, max: total - 1 },
+      step: 1,
+      margin: 1,
+      behaviour: 'tap-drag',
+    });
+    window.__trendBrush = brushEl.noUiSlider;
+
+    function applyRange() {
+      const values = brushEl.noUiSlider.get(true);
+      let s = Math.round(values[0]);
+      let e = Math.round(values[1]);
+      const lbls = chart.data.labels;
+      if (s < 0) s = 0;
+      if (e > lbls.length - 1) e = lbls.length - 1;
+      document.getElementById('trendBrushFrom').textContent = lbls[s] || '';
+      document.getElementById('trendBrushTo').textContent = lbls[e] || '';
+      __brushSyncing = true;
+      chart.options.scales.x.min = s;
+      chart.options.scales.x.max = e;
+      chart.update('none');
+      __brushSyncing = false;
+    }
+
+    brushEl.noUiSlider.on('update', applyRange);
+    applyRange();
+  }
+
+  // 監聽 chart afterUpdate, 當 labels 變化時 (例如切 30/90/180/全部) 自動同步 brush range
+  function __registerBrushSync() {
+    if (typeof Chart === 'undefined') return setTimeout(__registerBrushSync, 50);
+    Chart.register({
+      id: 'brushSync',
+      afterUpdate(chart) {
+        if (__brushSyncing) return;
+        if (chart.canvas.id !== 'trendChart') return;
+        const brushEl = document.getElementById('trendBrush');
+        if (!brushEl || !brushEl.noUiSlider) return;
+        const total = chart.data.labels.length;
+        if (total < 2) return;
+        const opts = brushEl.noUiSlider.options;
+        if (opts.range.max !== total - 1) {
+          // labels 變了, update slider 範圍
+          brushEl.noUiSlider.updateOptions({
+            start: [Math.max(0, total - 30), total - 1],
+            range: { min: 0, max: total - 1 },
+          }, true);
+        }
+      },
+    });
+  }
+  __registerBrushSync();
+  setTimeout(__injectTrendBrush, 600);
 
   // 攔截「點圖表跳轉到記錄頁」改成 scroll 到 #records section + 高亮該日
   document.addEventListener('DOMContentLoaded', () => {
