@@ -251,6 +251,16 @@ def main():
     h2 { font-size: 1rem !important; line-height: 1.4 !important; }
     h3 { font-size: 0.95rem !important; }
 
+    /* 隱藏血壓趨勢上方的 30/90/180/全部 範圍按鈕 + 自訂日期區間
+       (mobile 用 mobile-summary 內的快速 chip + brush 統一管理範圍) */
+    .trend-range-btn { display: none !important; }
+    /* parent div 包了所有 trend-range-btn,直接整層藏 */
+    .trend-range-btn:first-child,
+    div:has(> .trend-range-btn) { display: none !important; }
+    /* 「自訂區間」日期 picker 列也藏 */
+    #dateFrom, #dateTo, #dateApplyBtn, #dateClearBtn { display: none !important; }
+    div:has(> #dateFrom) { display: none !important; }
+
     /* 所有 grid 強制塌欄 (覆蓋 Tailwind md:grid-cols-N) */
     .grid.grid-cols-1 { grid-template-columns: 1fr !important; }
     [class*="md:grid-cols-2"] { grid-template-columns: 1fr !important; }
@@ -332,12 +342,17 @@ def main():
       const q = u.searchParams;
       if (p === '/api/raw') {
         let rows = __INLINE.raw_all;
+        // Mobile: 一律回全部資料 (brush + 快速 chip 控制視覺範圍,
+        // 不靠 server side filter)
+        if (window.matchMedia('(max-width: 767px)').matches) {
+          return Promise.resolve({ ok: true, status: 200, json: async () => rows });
+        }
+        // Desktop: 仍照 days/from/to 過濾 (因 trend-range-btn 仍顯示)
         const fr = q.get('from'), to = q.get('to');
         const days = parseInt(q.get('days') || '30');
         if (fr && to) {
           rows = rows.filter(r => r.measure_date >= fr && r.measure_date <= to);
         } else if (days > 0 && days < 9999) {
-          // 從最新資料倒推 N 天 (不從 today,因為 mobile.html 是 snapshot)
           const dates = __INLINE.raw_all.map(r => r.measure_date).sort();
           if (dates.length) {
             const lastD = new Date(dates[dates.length - 1]);
@@ -416,6 +431,18 @@ def main():
   const __BRUSH_CHARTS = ['trendChart', 'pulseChart', 'varSysChart', 'varDiaChart', 'weeklyChart'];
   let __brushSyncing = false;
 
+  // 按「日曆天」找出 labels 中對應「最後 N 天」起點 index
+  // (而非「最後 N 個 data points」,避免資料稀疏時誤判)
+  function __dateIndexCutoff(labels, daysFromEnd) {
+    if (!labels || !labels.length) return 0;
+    const lastIso = labels[labels.length - 1];
+    const cutoff = new Date(lastIso);
+    cutoff.setDate(cutoff.getDate() - daysFromEnd + 1);
+    const cutoffIso = cutoff.toISOString().slice(0, 10);
+    const idx = labels.findIndex(l => l >= cutoffIso);
+    return idx < 0 ? 0 : idx;
+  }
+
   // 即時更新 mobile-summary 內的「目前範圍」狀態
   function __updateBrushStatus() {
     const brushEl = document.getElementById('trendChart-brush');
@@ -437,11 +464,11 @@ def main():
     if (statusEl) {
       statusEl.textContent = `${fromLabel.slice(5)} ~ ${toLabel.slice(5)} (${dayCount} 天)`;
     }
-    // 更新 quick chip active 狀態
+    // 更新 quick chip active 狀態 (按日曆天比對)
     const total = labels.length;
     document.querySelectorAll('.brush-quick').forEach(btn => {
       const d = parseInt(btn.dataset.days);
-      const expectS = d === 0 ? 0 : Math.max(0, total - d);
+      const expectS = d === 0 ? 0 : __dateIndexCutoff(labels, d);
       btn.classList.toggle('active', s === expectS && e === total - 1);
     });
   }
@@ -458,7 +485,8 @@ def main():
 
     const labels = chart.data.labels;
     const total = labels.length;
-    const initStart = Math.max(0, total - 30);
+    // 預設「最近 30 天日曆」對應 index (非最後 30 個 data points)
+    const initStart = __dateIndexCutoff(labels, 30);
 
     const wrap = document.createElement('div');
     wrap.id = canvasId + '-brush-wrap';
@@ -555,16 +583,32 @@ def main():
         if (!brushEl || !brushEl.noUiSlider || !canvas) return;
         const chart = Chart.getChart(canvas);
         if (!chart) return;
-        const total = chart.data.labels.length;
-        let s, e = total - 1;
-        if (days <= 0) s = 0;
-        else s = Math.max(0, total - days);
+        const labels = chart.data.labels;
+        const total = labels.length;
+        const e = total - 1;
+        // 按「最後 N 天日曆」找對應 index (非最後 N 個 data points)
+        const s = days <= 0 ? 0 : __dateIndexCutoff(labels, days);
         brushEl.noUiSlider.set([s, e]); // 透過聯動帶動其他 brush
       });
     });
   }
   setTimeout(__registerQuickChips, 800);
   setTimeout(__updateBrushStatus, 1000);
+  // (mobile 不再需要 force loadData(9999):fetch override 已直接回全部資料)
+
+  // 啟動完成後 force 一次 brush 預設範圍 (最近 30 天日曆),
+  // 避免 chart loadData race condition 讓 brushSync 設到不完整範圍
+  setTimeout(() => {
+    if (!window.matchMedia('(max-width: 767px)').matches) return;
+    const brushEl = document.getElementById('trendChart-brush');
+    const canvas = document.getElementById('trendChart');
+    if (!brushEl || !brushEl.noUiSlider || !canvas) return;
+    const chart = Chart.getChart(canvas);
+    if (!chart) return;
+    const labels = chart.data.labels;
+    if (labels.length < 2) return;
+    brushEl.noUiSlider.set([__dateIndexCutoff(labels, 30), labels.length - 1]);
+  }, 1800);
 
   function __injectAllBrushes() {
     if (typeof Chart === 'undefined' || typeof noUiSlider === 'undefined') {
@@ -592,10 +636,10 @@ def main():
         if (total < 2) return;
         const opts = brushEl.noUiSlider.options;
         if (opts.range.max !== total - 1) {
-          // labels 變了, update slider range + tooltip formatter
+          // labels 變了, update slider range + tooltip formatter (用日曆 30 天)
           const newLabels = chart.data.labels;
           brushEl.noUiSlider.updateOptions({
-            start: [Math.max(0, total - 30), total - 1],
+            start: [__dateIndexCutoff(newLabels, 30), total - 1],
             range: { min: 0, max: total - 1 },
             tooltips: [
               { to: i => (newLabels[Math.round(i)] || '').slice(5), from: Number },
@@ -687,6 +731,7 @@ def main():
       <button type="button" class="brush-quick" data-days="7">7天</button>
       <button type="button" class="brush-quick" data-days="14">14天</button>
       <button type="button" class="brush-quick" data-days="30">30天</button>
+      <button type="button" class="brush-quick" data-days="90">90天</button>
       <button type="button" class="brush-quick" data-days="0">全部</button>
       <span id="brush-status" class="ml-auto text-blue-600 font-medium num text-[10px]">—</span>
     </div>
